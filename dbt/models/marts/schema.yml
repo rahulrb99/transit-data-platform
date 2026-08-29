@@ -35,3 +35,54 @@ models:
               arguments:
                 to: ref('dim_stop')
                 field: stop_id
+  - name: ml_delay_training
+    description: >
+      Supervised-learning mart for predicting vehicle delay four scheduled stops
+      into the future from realtime state and static schedule features.
+    columns:
+      - name: observation_id
+        tests:
+          - not_null
+          - unique
+      - name: prediction_timestamp
+        tests:
+          - not_null
+      - name: vehicle_id
+        tests:
+          - not_null
+      - name: trip_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_trips')
+                field: trip_id
+      - name: route_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_route')
+                field: route_id
+      - name: scheduled_stop_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_stop')
+                field: stop_id
+      - name: current_stop_sequence
+        tests:
+          - not_null
+      - name: current_delay_sec
+        tests:
+          - not_null
+      - name: target_observation_id
+        tests:
+          - not_null
+      - name: target_event_timestamp
+        tests:
+          - not_null
+      - name: target_delay_4_stops_sec
+        tests:
+          - not_null

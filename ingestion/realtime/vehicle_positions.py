@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -16,6 +17,7 @@ from ingestion.metadata import IngestionMetadata, record_ingestion
 
 @dataclass(frozen=True)
 class VehiclePositionRecord:
+    event_id: str
     ingested_at: datetime
     feed_timestamp: datetime | None
     entity_id: str | None
@@ -35,6 +37,18 @@ class VehiclePositionRecord:
     speed: float | None
     occupancy_status: str | None
     source: str
+
+
+def datetime_to_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()
+
+
+def parse_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(value)
 
 
 def _has_field(message: object, field_name: str) -> bool:
@@ -61,6 +75,21 @@ def checksum_bytes(content: bytes) -> str:
     return sha256(content).hexdigest()
 
 
+def build_event_id(
+    source: str,
+    entity_id: str | None,
+    vehicle_id: str | None,
+    feed_timestamp: datetime | None,
+) -> str:
+    event_key = {
+        "source": source,
+        "entity_id": entity_id,
+        "vehicle_id": vehicle_id,
+        "feed_timestamp": datetime_to_iso(feed_timestamp),
+    }
+    return sha256(json.dumps(event_key, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def save_raw_feed(content: bytes, ingested_at: datetime) -> Path:
     settings = get_settings()
     output_dir = settings.raw_data_root / "realtime" / "vehicle_positions" / ingested_at.date().isoformat()
@@ -78,6 +107,10 @@ def download_vehicle_positions() -> tuple[bytes, Path, datetime]:
     content = response.content
     raw_path = save_raw_feed(content, ingested_at)
     return content, raw_path, ingested_at
+
+
+def fetch_feed() -> tuple[bytes, Path, datetime]:
+    return download_vehicle_positions()
 
 
 def parse_vehicle_positions(
@@ -99,13 +132,16 @@ def parse_vehicle_positions(
         trip = vehicle_position.trip if _has_field(vehicle_position, "trip") else None
         vehicle = vehicle_position.vehicle if _has_field(vehicle_position, "vehicle") else None
         position = vehicle_position.position if _has_field(vehicle_position, "position") else None
+        entity_id = entity.id or None
+        vehicle_id = vehicle.id or None if vehicle else None
 
         records.append(
             VehiclePositionRecord(
+                event_id=build_event_id(source, entity_id, vehicle_id, feed_timestamp),
                 ingested_at=ingested_at,
                 feed_timestamp=feed_timestamp,
-                entity_id=entity.id or None,
-                vehicle_id=vehicle.id or None if vehicle else None,
+                entity_id=entity_id,
+                vehicle_id=vehicle_id,
                 vehicle_label=vehicle.label or None if vehicle else None,
                 trip_id=trip.trip_id or None if trip else None,
                 route_id=trip.route_id or None if trip else None,
@@ -145,10 +181,77 @@ def parse_vehicle_positions(
     return records
 
 
+def parse_feed(content: bytes, ingested_at: datetime, source: str) -> list[VehiclePositionRecord]:
+    return parse_vehicle_positions(content, ingested_at, source)
+
+
+def record_to_event(record: VehiclePositionRecord) -> dict[str, object]:
+    return {
+        "event_id": record.event_id,
+        "ingested_at": datetime_to_iso(record.ingested_at),
+        "feed_timestamp": datetime_to_iso(record.feed_timestamp),
+        "entity_id": record.entity_id,
+        "vehicle_id": record.vehicle_id,
+        "vehicle_label": record.vehicle_label,
+        "trip_id": record.trip_id,
+        "route_id": record.route_id,
+        "direction_id": record.direction_id,
+        "start_time": record.start_time,
+        "start_date": record.start_date,
+        "stop_id": record.stop_id,
+        "current_stop_sequence": record.current_stop_sequence,
+        "current_status": record.current_status,
+        "latitude": record.latitude,
+        "longitude": record.longitude,
+        "bearing": record.bearing,
+        "speed": record.speed,
+        "occupancy_status": record.occupancy_status,
+        "source": record.source,
+    }
+
+
+def event_to_record(event: dict[str, object]) -> VehiclePositionRecord:
+    def optional_str(key: str) -> str | None:
+        value = event.get(key)
+        return value if isinstance(value, str) else None
+
+    def optional_int(key: str) -> int | None:
+        value = event.get(key)
+        return value if isinstance(value, int) else None
+
+    def optional_float(key: str) -> float | None:
+        value = event.get(key)
+        return float(value) if isinstance(value, int | float) else None
+
+    return VehiclePositionRecord(
+        event_id=str(event["event_id"]),
+        ingested_at=parse_datetime(optional_str("ingested_at")) or datetime.now(UTC),
+        feed_timestamp=parse_datetime(optional_str("feed_timestamp")),
+        entity_id=optional_str("entity_id"),
+        vehicle_id=optional_str("vehicle_id"),
+        vehicle_label=optional_str("vehicle_label"),
+        trip_id=optional_str("trip_id"),
+        route_id=optional_str("route_id"),
+        direction_id=optional_int("direction_id"),
+        start_time=optional_str("start_time"),
+        start_date=optional_str("start_date"),
+        stop_id=optional_str("stop_id"),
+        current_stop_sequence=optional_int("current_stop_sequence"),
+        current_status=optional_str("current_status"),
+        latitude=optional_float("latitude"),
+        longitude=optional_float("longitude"),
+        bearing=optional_float("bearing"),
+        speed=optional_float("speed"),
+        occupancy_status=optional_str("occupancy_status"),
+        source=str(event["source"]),
+    )
+
+
 def ensure_table() -> None:
     query = """
         CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
             id BIGSERIAL PRIMARY KEY,
+            event_id TEXT UNIQUE,
             ingested_at TIMESTAMPTZ NOT NULL,
             feed_timestamp TIMESTAMPTZ,
             entity_id TEXT,
@@ -172,6 +275,19 @@ def ensure_table() -> None:
     """
     with connect() as conn, conn.cursor() as cur:
         cur.execute(query)
+        cur.execute("ALTER TABLE realtime_vehicle_positions ADD COLUMN IF NOT EXISTS event_id TEXT")
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_event_id
+                ON realtime_vehicle_positions (event_id)
+            """
+        )
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_rvp_event_id_unique
+                ON realtime_vehicle_positions (event_id)
+            """
+        )
 
 
 def insert_vehicle_positions(records: list[VehiclePositionRecord]) -> int:
@@ -180,6 +296,7 @@ def insert_vehicle_positions(records: list[VehiclePositionRecord]) -> int:
 
     ensure_table()
     columns = [
+        "event_id",
         "ingested_at",
         "feed_timestamp",
         "entity_id",
@@ -200,7 +317,12 @@ def insert_vehicle_positions(records: list[VehiclePositionRecord]) -> int:
         "occupancy_status",
         "source",
     ]
-    insert_query = sql.SQL("INSERT INTO realtime_vehicle_positions ({}) VALUES ({})").format(
+    insert_query = sql.SQL(
+        """
+        INSERT INTO realtime_vehicle_positions ({}) VALUES ({})
+        ON CONFLICT (event_id) DO NOTHING
+        """
+    ).format(
         sql.SQL(", ").join(sql.Identifier(column) for column in columns),
         sql.SQL(", ").join(sql.Placeholder() for _ in columns),
     )
@@ -208,8 +330,9 @@ def insert_vehicle_positions(records: list[VehiclePositionRecord]) -> int:
 
     with connect() as conn, conn.cursor() as cur:
         cur.executemany(insert_query, rows)
+        inserted_count = cur.rowcount
 
-    return len(records)
+    return inserted_count
 
 
 def verify_latest(limit: int = 20) -> list[tuple]:

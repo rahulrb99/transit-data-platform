@@ -7,21 +7,11 @@ The project ingests MBTA GTFS static schedule data, preserves original raw files
 ## Architecture
 
 ```text
-MBTA GTFS Static / GTFS-Realtime
-        |
-        v
-Python ingestion
-        |
-        +--> raw file storage with metadata
-        |
-        v
-PostgreSQL raw schema
-        |
-        v
-dbt staging / intermediate / marts
-        |
-        v
-Streamlit dashboard
+                    BATCH
+MBTA GTFS Static -> Python ingestion -> raw storage -> PostgreSQL -> dbt
+
+                    STREAM
+MBTA GTFS-Realtime -> Python producer -> Redpanda -> Python consumer -> PostgreSQL
 ```
 
 ## Stack
@@ -32,6 +22,7 @@ Streamlit dashboard
 | Warehouse | PostgreSQL |
 | Transformation | dbt |
 | Orchestration | Airflow |
+| Streaming | Redpanda |
 | Dashboard | Streamlit |
 | Containers | Docker Compose |
 | Testing | pytest + dbt tests |
@@ -92,6 +83,44 @@ Or run the local smoke test:
 ```
 
 See [docs/development-checklist.md](docs/development-checklist.md) for the day-one validation checklist.
+
+See [docs/ml-training-dataset.md](docs/ml-training-dataset.md) for the delay-prediction
+training dataset design.
+
+## Realtime Streaming
+
+Start PostgreSQL, Redpanda, and Redpanda Console:
+
+```powershell
+docker compose up -d postgres redpanda redpanda-init redpanda-console
+```
+
+Open Redpanda Console:
+
+```text
+http://localhost:8080
+```
+
+Publish one MBTA vehicle-position snapshot to the `vehicle_positions` topic:
+
+```powershell
+python -m ingestion.realtime.producer --once
+```
+
+Consume events into PostgreSQL:
+
+```powershell
+python -m ingestion.realtime.consumer --max-messages 500
+```
+
+Verify the latest records:
+
+```sql
+SELECT *
+FROM realtime_vehicle_positions
+ORDER BY ingested_at DESC
+LIMIT 20;
+```
 
 ## Initial MVP
 

@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.docker-tmp/
 data/raw/
 data/processed/
 logs/

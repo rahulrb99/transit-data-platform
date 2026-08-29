@@ -36,4 +36,12 @@ models:
       - name: stop_id
         tests:
           - not_null
-
+  - name: stg_realtime_vehicle_positions
+    columns:
+      - name: observation_id
+        tests:
+          - not_null
+          - unique
+      - name: event_timestamp
+        tests:
+          - not_null

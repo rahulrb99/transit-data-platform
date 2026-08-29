@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS raw.ingestion_metadata (
 
 CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
     id BIGSERIAL PRIMARY KEY,
+    event_id TEXT UNIQUE,
     ingested_at TIMESTAMPTZ NOT NULL,
     feed_timestamp TIMESTAMPTZ,
     entity_id TEXT,
@@ -34,3 +35,9 @@ CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
     occupancy_status TEXT,
     source TEXT NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_event_id
+    ON realtime_vehicle_positions (event_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rvp_event_id_unique
+    ON realtime_vehicle_positions (event_id);

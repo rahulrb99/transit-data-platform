@@ -9,9 +9,14 @@ flowchart TD
     E --> F[Ingestion Metadata]
     B --> G[(PostgreSQL Raw Schema)]
     D --> G
+    D --> M[Redpanda vehicle_positions Topic]
+    M --> N[Python Consumer]
+    N --> G
     G --> H[dbt Staging Models]
     H --> I[dbt Intermediate Models]
     I --> J[dbt Mart Models]
+    I --> O[ML Feature Dataset]
+    O --> P[Delay Training Mart]
     J --> K[Streamlit Dashboard]
     L[Airflow DAGs] --> B
     L --> D
@@ -25,4 +30,5 @@ flowchart TD
 - dbt owns analytical transformations, tests, and documentation.
 - Airflow coordinates scheduled ingestion and transformation work.
 - Realtime ingestion starts as direct polling; Kafka or Redpanda can be added after the core data path works.
-
+- The ML training mart is produced in dbt from realtime observations joined to static GTFS schedule data.
+- Weather is excluded from the first ML dataset until the transit-only baseline is validated.

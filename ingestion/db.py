@@ -11,5 +11,5 @@ def connect() -> psycopg.Connection:
         dbname=settings.postgres_db,
         user=settings.postgres_user,
         password=settings.postgres_password,
+        connect_timeout=10,
     )
-

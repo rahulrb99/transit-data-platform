@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: int_delay_prediction_features
+    description: >
+      One row per realtime vehicle observation that can be mapped to a scheduled
+      GTFS trip stop sequence, with leakage-safe features and an optional
+      four-stop-ahead target.
+    columns:
+      - name: observation_id
+        tests:
+          - not_null
+          - unique
+      - name: vehicle_id
+        tests:
+          - not_null
+      - name: trip_id
+        tests:
+          - not_null
+      - name: route_id
+        tests:
+          - not_null
+      - name: current_stop_sequence
+        tests:
+          - not_null
+      - name: event_timestamp
+        tests:
+          - not_null
+      - name: current_delay_sec
+        tests:
+          - not_null
+

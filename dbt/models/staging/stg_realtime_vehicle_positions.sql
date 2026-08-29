@@ -1,0 +1,24 @@
+select
+    id as observation_id,
+    event_id,
+    ingested_at,
+    coalesce(feed_timestamp, ingested_at) as event_timestamp,
+    entity_id,
+    vehicle_id,
+    vehicle_label,
+    trip_id,
+    route_id,
+    direction_id,
+    start_time,
+    start_date,
+    stop_id,
+    current_stop_sequence::integer as current_stop_sequence,
+    current_status,
+    latitude,
+    longitude,
+    bearing,
+    speed,
+    occupancy_status,
+    source
+from public.realtime_vehicle_positions
+

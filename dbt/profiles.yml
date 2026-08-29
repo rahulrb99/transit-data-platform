@@ -1,0 +1,13 @@
+transit_data_platform:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('POSTGRES_USER', 'transit') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'transit') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'transit') }}"
+      schema: marts
+      threads: 4
+

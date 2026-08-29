@@ -1,0 +1,9 @@
+select
+    route_id,
+    service_id,
+    trip_id,
+    trip_headsign,
+    direction_id,
+    shape_id
+from raw.trips
+

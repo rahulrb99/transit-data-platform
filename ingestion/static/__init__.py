@@ -1,0 +1,2 @@
+"""Static GTFS ingestion."""
+

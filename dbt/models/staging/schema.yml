@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: stg_routes
+    columns:
+      - name: route_id
+        tests:
+          - not_null
+          - unique
+      - name: route_type
+        tests:
+          - not_null
+  - name: stg_stops
+    columns:
+      - name: stop_id
+        tests:
+          - not_null
+          - unique
+      - name: stop_name
+        tests:
+          - not_null
+  - name: stg_trips
+    columns:
+      - name: trip_id
+        tests:
+          - not_null
+          - unique
+      - name: route_id
+        tests:
+          - not_null
+  - name: stg_stop_times
+    columns:
+      - name: trip_id
+        tests:
+          - not_null
+      - name: stop_id
+        tests:
+          - not_null
+

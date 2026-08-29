@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: dim_route
+    description: Route dimension from MBTA GTFS static data.
+    columns:
+      - name: route_id
+        tests:
+          - not_null
+          - unique
+  - name: dim_stop
+    description: Stop dimension from MBTA GTFS static data.
+    columns:
+      - name: stop_id
+        tests:
+          - not_null
+          - unique
+  - name: fct_stop_arrival
+    description: Scheduled stop-level arrival fact table.
+    columns:
+      - name: trip_id
+        tests:
+          - not_null
+      - name: route_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_route')
+              field: route_id
+      - name: stop_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_stop')
+              field: stop_id
+

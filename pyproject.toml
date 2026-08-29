@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "transit-data-platform"
+version = "0.1.0"
+description = "Local data engineering platform for MBTA transit data."
+requires-python = ">=3.11"
+dependencies = [
+  "pandas>=2.2",
+  "psycopg[binary]>=3.2",
+  "pydantic-settings>=2.4",
+  "python-dotenv>=1.0",
+  "requests>=2.32",
+  "streamlit>=1.37",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.5",
+  "dbt-postgres>=1.8",
+]
+
+[tool.setuptools.packages.find]
+include = ["ingestion*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

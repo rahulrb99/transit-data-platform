@@ -1,7 +1,7 @@
+import csv
 from pathlib import Path
 from zipfile import ZipFile
 
-import pandas as pd
 from psycopg import sql
 
 from ingestion.db import connect
@@ -24,32 +24,40 @@ def latest_static_zip(raw_root: Path = Path("data/raw/static")) -> Path:
     return candidates[-1]
 
 
-def create_raw_table(table_name: str, columns: list[str]) -> None:
+def recreate_raw_table(table_name: str, columns: list[str]) -> None:
     column_defs = [sql.SQL("{} TEXT").format(sql.Identifier(column)) for column in columns]
-    query = sql.SQL("CREATE TABLE IF NOT EXISTS raw.{} ({})").format(
+    drop_query = sql.SQL("DROP TABLE IF EXISTS raw.{}").format(sql.Identifier(table_name))
+    create_query = sql.SQL("CREATE TABLE raw.{} ({})").format(
         sql.Identifier(table_name),
         sql.SQL(", ").join(column_defs),
     )
     with connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(query)
+            cur.execute(drop_query)
+            cur.execute(create_query)
 
 
-def load_dataframe(table_name: str, dataframe: pd.DataFrame) -> None:
-    if dataframe.empty:
-        return
+def load_csv_bytes(table_name: str, raw_bytes: bytes) -> int:
+    header_line = raw_bytes.splitlines()[0].decode("utf-8-sig")
+    columns = next(csv.reader([header_line]))
+    recreate_raw_table(table_name, columns)
 
-    create_raw_table(table_name, list(dataframe.columns))
-    columns = [sql.Identifier(column) for column in dataframe.columns]
-    insert = sql.SQL("INSERT INTO raw.{} ({}) VALUES ({})").format(
+    copy_query = sql.SQL(
+        "COPY raw.{} ({}) FROM STDIN WITH (FORMAT CSV, HEADER TRUE, NULL '')"
+    ).format(
         sql.Identifier(table_name),
-        sql.SQL(", ").join(columns),
-        sql.SQL(", ").join(sql.Placeholder() for _ in columns),
+        sql.SQL(", ").join(sql.Identifier(column) for column in columns),
     )
-    rows = dataframe.astype(object).where(pd.notnull(dataframe), None).itertuples(index=False, name=None)
+
     with connect() as conn:
         with conn.cursor() as cur:
-            cur.executemany(insert, rows)
+            with cur.copy(copy_query) as copy:
+                copy.write(raw_bytes)
+            cur.execute(
+                sql.SQL("SELECT count(*) FROM raw.{}").format(sql.Identifier(table_name))
+            )
+            row_count = cur.fetchone()[0]
+    return row_count
 
 
 def load_static_gtfs(zip_path: Path | None = None) -> None:
@@ -59,12 +67,10 @@ def load_static_gtfs(zip_path: Path | None = None) -> None:
             member = f"{table_name}.txt"
             if member not in gtfs_zip.namelist():
                 continue
-            with gtfs_zip.open(member) as file:
-                dataframe = pd.read_csv(file, dtype=str)
-            load_dataframe(table_name, dataframe)
+            row_count = load_csv_bytes(table_name, gtfs_zip.read(member))
+            print(f"Loaded raw.{table_name}: {row_count:,} rows")
 
 
 if __name__ == "__main__":
     load_static_gtfs()
     print("Loaded selected MBTA GTFS static files into raw schema")
-

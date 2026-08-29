@@ -25,12 +25,13 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('dim_route')
-              field: route_id
+              arguments:
+                to: ref('dim_route')
+                field: route_id
       - name: stop_id
         tests:
           - not_null
           - relationships:
-              to: ref('dim_stop')
-              field: stop_id
-
+              arguments:
+                to: ref('dim_stop')
+                field: stop_id

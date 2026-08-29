@@ -26,6 +26,10 @@ try:
 except psycopg.errors.UndefinedTable:
     st.info("Run static GTFS ingestion to populate the dashboard.")
     st.stop()
+except psycopg.OperationalError as error:
+    st.error("Could not connect to PostgreSQL. Confirm the project database is running.")
+    st.caption(str(error))
+    st.stop()
 
 routes, stops, trips, stop_arrivals = st.columns(4)
 routes.metric("Routes", f"{overview.loc[0, 'routes']:,}")

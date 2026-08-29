@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-transit}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-transit}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-55432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -36,4 +36,3 @@ services:
 
 volumes:
   postgres_data:
-

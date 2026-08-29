@@ -11,5 +11,6 @@ logs/
 *.db
 target/
 dbt_packages/
+*.egg-info/
+dbt/.user.yml
 .DS_Store
-

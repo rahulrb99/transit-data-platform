@@ -30,9 +30,8 @@ def create_raw_table(table_name: str, columns: list[str]) -> None:
         sql.Identifier(table_name),
         sql.SQL(", ").join(column_defs),
     )
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query)
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(query)
 
 
 def load_dataframe(table_name: str, dataframe: pd.DataFrame) -> None:
@@ -47,9 +46,8 @@ def load_dataframe(table_name: str, dataframe: pd.DataFrame) -> None:
         sql.SQL(", ").join(sql.Placeholder() for _ in columns),
     )
     rows = dataframe.astype(object).where(pd.notnull(dataframe), None).itertuples(index=False, name=None)
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.executemany(insert, rows)
+    with connect() as conn, conn.cursor() as cur:
+        cur.executemany(insert, rows)
 
 
 def load_static_gtfs(zip_path: Path | None = None) -> None:
@@ -67,4 +65,3 @@ def load_static_gtfs(zip_path: Path | None = None) -> None:
 if __name__ == "__main__":
     load_static_gtfs()
     print("Loaded selected MBTA GTFS static files into raw schema")
-

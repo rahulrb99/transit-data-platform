@@ -85,6 +85,14 @@ pip install -e ".[dev]"
 python -m ingestion.static.download_mbta_gtfs
 ```
 
+Or run the local smoke test:
+
+```powershell
+.\scripts\local_smoke_test.ps1
+```
+
+See [docs/development-checklist.md](docs/development-checklist.md) for the day-one validation checklist.
+
 ## Initial MVP
 
 - Download and preserve the MBTA GTFS static ZIP.
@@ -92,4 +100,3 @@ python -m ingestion.static.download_mbta_gtfs
 - Load key GTFS files into PostgreSQL raw tables.
 - Build dbt staging models for routes, stops, trips, and stop times.
 - Add a dashboard with route and schedule overview metrics.
-

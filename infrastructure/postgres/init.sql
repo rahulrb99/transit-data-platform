@@ -12,3 +12,25 @@ CREATE TABLE IF NOT EXISTS raw.ingestion_metadata (
     raw_path TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
+    id BIGSERIAL PRIMARY KEY,
+    ingested_at TIMESTAMPTZ NOT NULL,
+    feed_timestamp TIMESTAMPTZ,
+    entity_id TEXT,
+    vehicle_id TEXT,
+    vehicle_label TEXT,
+    trip_id TEXT,
+    route_id TEXT,
+    direction_id INTEGER,
+    start_time TEXT,
+    start_date TEXT,
+    stop_id TEXT,
+    current_stop_sequence INTEGER,
+    current_status TEXT,
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    bearing DOUBLE PRECISION,
+    speed DOUBLE PRECISION,
+    occupancy_status TEXT,
+    source TEXT NOT NULL
+);

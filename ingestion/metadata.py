@@ -24,16 +24,14 @@ def record_ingestion(metadata: IngestionMetadata) -> None:
         )
         VALUES (%s, %s, %s, %s, %s)
     """
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                sql,
-                (
-                    metadata.source,
-                    metadata.file_name,
-                    metadata.record_count,
-                    metadata.checksum_sha256,
-                    str(metadata.raw_path),
-                ),
-            )
-
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            sql,
+            (
+                metadata.source,
+                metadata.file_name,
+                metadata.record_count,
+                metadata.checksum_sha256,
+                str(metadata.raw_path),
+            ),
+        )

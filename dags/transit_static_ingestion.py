@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-
 
 default_args = {
     "owner": "data-engineering",
@@ -16,7 +15,7 @@ default_args = {
 with DAG(
     dag_id="transit_static_ingestion",
     description="Download and load MBTA static GTFS data.",
-    start_date=datetime(2026, 8, 29),
+    start_date=datetime(2026, 8, 29, tzinfo=UTC),
     schedule="@daily",
     catchup=False,
     default_args=default_args,
@@ -38,4 +37,3 @@ with DAG(
     )
 
     download_gtfs >> load_raw_tables >> run_dbt
-

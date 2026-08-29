@@ -31,10 +31,9 @@ def recreate_raw_table(table_name: str, columns: list[str]) -> None:
         sql.Identifier(table_name),
         sql.SQL(", ").join(column_defs),
     )
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(drop_query)
-            cur.execute(create_query)
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(drop_query)
+        cur.execute(create_query)
 
 
 def load_csv_bytes(table_name: str, raw_bytes: bytes) -> int:
@@ -49,14 +48,11 @@ def load_csv_bytes(table_name: str, raw_bytes: bytes) -> int:
         sql.SQL(", ").join(sql.Identifier(column) for column in columns),
     )
 
-    with connect() as conn:
-        with conn.cursor() as cur:
-            with cur.copy(copy_query) as copy:
-                copy.write(raw_bytes)
-            cur.execute(
-                sql.SQL("SELECT count(*) FROM raw.{}").format(sql.Identifier(table_name))
-            )
-            row_count = cur.fetchone()[0]
+    with connect() as conn, conn.cursor() as cur:
+        with cur.copy(copy_query) as copy:
+            copy.write(raw_bytes)
+        cur.execute(sql.SQL("SELECT count(*) FROM raw.{}").format(sql.Identifier(table_name)))
+        row_count = cur.fetchone()[0]
     return row_count
 
 

@@ -13,6 +13,7 @@ def test_vehicle_position_event_round_trip() -> None:
         event_id="event-1",
         ingested_at=datetime(2026, 8, 29, 17, 0, tzinfo=UTC),
         feed_timestamp=datetime(2026, 8, 29, 16, 59, 58, tzinfo=UTC),
+        vehicle_timestamp=datetime(2026, 8, 29, 16, 59, 59, tzinfo=UTC),
         entity_id="y1234",
         vehicle_id="y1234",
         vehicle_label="1234",

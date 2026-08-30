@@ -35,6 +35,8 @@ model for profiling, but only rows with a valid four-stop target are included in
 The current feature set is intentionally simple and explainable:
 
 - `vehicle_id`, `vehicle_label`: realtime vehicle identifiers.
+- `ingested_at`, `feed_timestamp`, `vehicle_timestamp`, `prediction_timestamp`:
+  source timestamps retained for debugging and model reproducibility.
 - `trip_id`, `route_id`, `direction_id`: realtime trip context.
 - `observed_stop_id`, `scheduled_stop_id`: current observed and scheduled stop.
 - `observed_stop_matches_schedule`: whether the realtime stop matches static GTFS.
@@ -89,8 +91,9 @@ timestamp.
 ## Known Limitations
 
 - MBTA VehiclePositions does not include an explicit delay field. Delay is
-  approximated from the vehicle observation timestamp and the scheduled arrival
-  time for the observed trip stop sequence.
+  approximated from the vehicle timestamp, falling back to feed timestamp and
+  ingestion timestamp when needed, minus the scheduled arrival time for the
+  observed trip stop sequence.
 - VehiclePositions snapshots may skip stops, repeat a stop, or emit statuses
   such as `IN_TRANSIT_TO`, which makes exact stop-arrival timing approximate.
 - The four-stop target only exists after enough realtime history has been
@@ -104,4 +107,3 @@ Weather is intentionally excluded from the first training dataset. It introduces
 another external data source, temporal joins, and backfill questions. Once the
 baseline transit-only dataset is validated, weather can be added as an
 experiment and kept only if it improves model performance.
-

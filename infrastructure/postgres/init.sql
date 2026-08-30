@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
     event_id TEXT UNIQUE,
     ingested_at TIMESTAMPTZ NOT NULL,
     feed_timestamp TIMESTAMPTZ,
+    vehicle_timestamp TIMESTAMPTZ,
     entity_id TEXT,
     vehicle_id TEXT,
     vehicle_label TEXT,
@@ -37,7 +38,4 @@ CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_event_id
-    ON realtime_vehicle_positions (event_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_rvp_event_id_unique
     ON realtime_vehicle_positions (event_id);

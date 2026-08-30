@@ -1,6 +1,9 @@
 select
     observation_id,
     event_id,
+    ingested_at,
+    feed_timestamp,
+    vehicle_timestamp,
     event_timestamp as prediction_timestamp,
     vehicle_id,
     vehicle_label,
@@ -40,4 +43,3 @@ select
     current_timestamp as training_row_created_at
 from {{ ref('int_delay_prediction_features') }}
 where has_target_delay_4_stops
-

@@ -2,7 +2,9 @@ select
     id as observation_id,
     event_id,
     ingested_at,
-    coalesce(feed_timestamp, ingested_at) as event_timestamp,
+    feed_timestamp,
+    vehicle_timestamp,
+    coalesce(vehicle_timestamp, feed_timestamp, ingested_at) as event_timestamp,
     entity_id,
     vehicle_id,
     vehicle_label,
@@ -21,4 +23,3 @@ select
     occupancy_status,
     source
 from public.realtime_vehicle_positions
-

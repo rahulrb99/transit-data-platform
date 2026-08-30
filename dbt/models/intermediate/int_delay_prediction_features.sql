@@ -40,6 +40,8 @@ eligible_observations as (
         observation_id,
         event_id,
         ingested_at,
+        feed_timestamp,
+        vehicle_timestamp,
         event_timestamp,
         entity_id,
         vehicle_id,
@@ -165,6 +167,8 @@ select
     features.observation_id,
     features.event_id,
     features.ingested_at,
+    features.feed_timestamp,
+    features.vehicle_timestamp,
     features.event_timestamp,
     features.entity_id,
     features.vehicle_id,
@@ -206,4 +210,3 @@ select
 from leakage_safe_features as features
 left join targets
     on features.observation_id = targets.observation_id
-

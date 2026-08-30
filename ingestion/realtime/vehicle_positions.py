@@ -20,6 +20,7 @@ class VehiclePositionRecord:
     event_id: str
     ingested_at: datetime
     feed_timestamp: datetime | None
+    vehicle_timestamp: datetime | None
     entity_id: str | None
     vehicle_id: str | None
     vehicle_label: str | None
@@ -140,6 +141,11 @@ def parse_vehicle_positions(
                 event_id=build_event_id(source, entity_id, vehicle_id, feed_timestamp),
                 ingested_at=ingested_at,
                 feed_timestamp=feed_timestamp,
+                vehicle_timestamp=(
+                    _timestamp_to_datetime(vehicle_position.timestamp)
+                    if _has_field(vehicle_position, "timestamp")
+                    else None
+                ),
                 entity_id=entity_id,
                 vehicle_id=vehicle_id,
                 vehicle_label=vehicle.label or None if vehicle else None,
@@ -190,6 +196,7 @@ def record_to_event(record: VehiclePositionRecord) -> dict[str, object]:
         "event_id": record.event_id,
         "ingested_at": datetime_to_iso(record.ingested_at),
         "feed_timestamp": datetime_to_iso(record.feed_timestamp),
+        "vehicle_timestamp": datetime_to_iso(record.vehicle_timestamp),
         "entity_id": record.entity_id,
         "vehicle_id": record.vehicle_id,
         "vehicle_label": record.vehicle_label,
@@ -227,6 +234,7 @@ def event_to_record(event: dict[str, object]) -> VehiclePositionRecord:
         event_id=str(event["event_id"]),
         ingested_at=parse_datetime(optional_str("ingested_at")) or datetime.now(UTC),
         feed_timestamp=parse_datetime(optional_str("feed_timestamp")),
+        vehicle_timestamp=parse_datetime(optional_str("vehicle_timestamp")),
         entity_id=optional_str("entity_id"),
         vehicle_id=optional_str("vehicle_id"),
         vehicle_label=optional_str("vehicle_label"),
@@ -254,6 +262,7 @@ def ensure_table() -> None:
             event_id TEXT UNIQUE,
             ingested_at TIMESTAMPTZ NOT NULL,
             feed_timestamp TIMESTAMPTZ,
+            vehicle_timestamp TIMESTAMPTZ,
             entity_id TEXT,
             vehicle_id TEXT,
             vehicle_label TEXT,
@@ -277,14 +286,11 @@ def ensure_table() -> None:
         cur.execute(query)
         cur.execute("ALTER TABLE realtime_vehicle_positions ADD COLUMN IF NOT EXISTS event_id TEXT")
         cur.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_event_id
-                ON realtime_vehicle_positions (event_id)
-            """
+            "ALTER TABLE realtime_vehicle_positions ADD COLUMN IF NOT EXISTS vehicle_timestamp TIMESTAMPTZ"
         )
         cur.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_rvp_event_id_unique
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_event_id
                 ON realtime_vehicle_positions (event_id)
             """
         )
@@ -299,6 +305,7 @@ def insert_vehicle_positions(records: list[VehiclePositionRecord]) -> int:
         "event_id",
         "ingested_at",
         "feed_timestamp",
+        "vehicle_timestamp",
         "entity_id",
         "vehicle_id",
         "vehicle_label",

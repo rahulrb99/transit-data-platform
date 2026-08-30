@@ -46,13 +46,10 @@ services:
     depends_on:
       redpanda:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      rpk topic create vehicle_positions
-      --brokers redpanda:9092
-      --partitions 3
-      --replicas 1
-      || true
+    entrypoint: ["/bin/sh"]
+    command:
+      - -c
+      - rpk topic create vehicle_positions -X brokers=redpanda:9092 -p 3 -r 1 || true
 
   redpanda-console:
     image: redpandadata/console:v2.8.3

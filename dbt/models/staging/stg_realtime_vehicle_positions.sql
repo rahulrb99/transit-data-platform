@@ -1,3 +1,12 @@
+{{
+    config(
+        materialized='incremental',
+        incremental_strategy='delete+insert',
+        unique_key='observation_id',
+        on_schema_change='fail'
+    )
+}}
+
 select
     id as observation_id,
     event_id,
@@ -23,3 +32,6 @@ select
     occupancy_status,
     source
 from public.realtime_vehicle_positions
+{% if is_incremental() %}
+where id > coalesce((select max(observation_id) from {{ this }}), 0)
+{% endif %}

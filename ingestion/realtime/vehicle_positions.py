@@ -8,11 +8,17 @@ from pathlib import Path
 
 import requests
 from google.transit import gtfs_realtime_pb2
-from psycopg import sql
+from psycopg import Cursor, sql
 
 from ingestion.config import get_settings
 from ingestion.db import connect
 from ingestion.metadata import IngestionMetadata, record_ingestion
+from ingestion.realtime.metrics import (
+    MetricPersistenceResult,
+    PipelineMetricContext,
+    build_pipeline_metric,
+    insert_pipeline_metric,
+)
 
 
 @dataclass(frozen=True)
@@ -100,18 +106,28 @@ def save_raw_feed(content: bytes, ingested_at: datetime) -> Path:
     return output_path
 
 
-def download_vehicle_positions() -> tuple[bytes, Path, datetime]:
+def download_vehicle_positions(
+    session: requests.Session | None = None,
+    timeout_seconds: float = 30.0,
+) -> tuple[bytes, Path, datetime]:
     settings = get_settings()
     ingested_at = datetime.now(UTC)
-    response = requests.get(settings.mbta_vehicle_positions_url, timeout=30)
-    response.raise_for_status()
-    content = response.content
+    requester = session or requests
+    with requester.get(
+        settings.mbta_vehicle_positions_url,
+        timeout=timeout_seconds,
+    ) as response:
+        response.raise_for_status()
+        content = response.content
     raw_path = save_raw_feed(content, ingested_at)
     return content, raw_path, ingested_at
 
 
-def fetch_feed() -> tuple[bytes, Path, datetime]:
-    return download_vehicle_positions()
+def fetch_feed(
+    session: requests.Session | None = None,
+    timeout_seconds: float = 30.0,
+) -> tuple[bytes, Path, datetime]:
+    return download_vehicle_positions(session=session, timeout_seconds=timeout_seconds)
 
 
 def parse_vehicle_positions(
@@ -255,11 +271,11 @@ def event_to_record(event: dict[str, object]) -> VehiclePositionRecord:
     )
 
 
-def ensure_table() -> None:
+def _ensure_table(cur: Cursor) -> None:
     query = """
         CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
             id BIGSERIAL PRIMARY KEY,
-            event_id TEXT UNIQUE,
+            event_id TEXT,
             ingested_at TIMESTAMPTZ NOT NULL,
             feed_timestamp TIMESTAMPTZ,
             vehicle_timestamp TIMESTAMPTZ,
@@ -282,25 +298,46 @@ def ensure_table() -> None:
             source TEXT NOT NULL
         )
     """
+    cur.execute(query)
+    cur.execute("ALTER TABLE realtime_vehicle_positions ADD COLUMN IF NOT EXISTS event_id TEXT")
+    cur.execute(
+        "ALTER TABLE realtime_vehicle_positions ADD COLUMN IF NOT EXISTS vehicle_timestamp TIMESTAMPTZ"
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_event_id
+            ON realtime_vehicle_positions (event_id)
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_trip_sequence_time
+            ON realtime_vehicle_positions (
+                trip_id,
+                current_stop_sequence,
+                vehicle_timestamp,
+                feed_timestamp,
+                ingested_at
+            )
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_vehicle_trip_sequence
+            ON realtime_vehicle_positions (vehicle_id, trip_id, current_stop_sequence)
+        """
+    )
+
+
+def ensure_table() -> None:
     with connect() as conn, conn.cursor() as cur:
-        cur.execute(query)
-        cur.execute("ALTER TABLE realtime_vehicle_positions ADD COLUMN IF NOT EXISTS event_id TEXT")
-        cur.execute(
-            "ALTER TABLE realtime_vehicle_positions ADD COLUMN IF NOT EXISTS vehicle_timestamp TIMESTAMPTZ"
-        )
-        cur.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_event_id
-                ON realtime_vehicle_positions (event_id)
-            """
-        )
+        _ensure_table(cur)
 
 
-def insert_vehicle_positions(records: list[VehiclePositionRecord]) -> int:
-    if not records:
-        return 0
-
-    ensure_table()
+def _insert_vehicle_position_rows(
+    cur: Cursor,
+    records: list[VehiclePositionRecord],
+) -> int:
     columns = [
         "event_id",
         "ingested_at",
@@ -334,12 +371,37 @@ def insert_vehicle_positions(records: list[VehiclePositionRecord]) -> int:
         sql.SQL(", ").join(sql.Placeholder() for _ in columns),
     )
     rows = [tuple(getattr(record, column) for column in columns) for record in records]
+    cur.executemany(insert_query, rows)
+    return cur.rowcount
+
+
+def insert_vehicle_positions(records: list[VehiclePositionRecord]) -> int:
+    if not records:
+        return 0
 
     with connect() as conn, conn.cursor() as cur:
-        cur.executemany(insert_query, rows)
-        inserted_count = cur.rowcount
+        _ensure_table(cur)
+        inserted_count = _insert_vehicle_position_rows(cur, records)
 
     return inserted_count
+
+
+def insert_vehicle_positions_with_metric(
+    records: list[VehiclePositionRecord],
+    metric_context: PipelineMetricContext,
+) -> MetricPersistenceResult:
+    with connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        inserted_count = _insert_vehicle_position_rows(cur, records)
+        metric = build_pipeline_metric(
+            metric_context,
+            persisted_count=inserted_count,
+        )
+        insert_pipeline_metric(cur, metric)
+    return MetricPersistenceResult(
+        inserted_count=inserted_count,
+        processing_duration_seconds=metric.processing_duration_seconds,
+    )
 
 
 def verify_latest(limit: int = 20) -> list[tuple]:

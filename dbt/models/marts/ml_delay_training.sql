@@ -1,3 +1,12 @@
+{{
+    config(
+        materialized='incremental',
+        incremental_strategy='delete+insert',
+        unique_key='observation_id',
+        on_schema_change='fail'
+    )
+}}
+
 select
     observation_id,
     event_id,
@@ -43,3 +52,13 @@ select
     current_timestamp as training_row_created_at
 from {{ ref('int_delay_prediction_features') }}
 where has_target_delay_4_stops
+{% if is_incremental() %}
+    and event_timestamp >= coalesce(
+        (
+            select max(prediction_timestamp)
+                - make_interval(hours => {{ var('realtime_incremental_lookback_hours', 24) }})
+            from {{ this }}
+        ),
+        '1900-01-01'::timestamptz
+    )
+{% endif %}

@@ -14,8 +14,13 @@ class Settings(BaseSettings):
     processed_data_root: Path = Path("data/processed")
     mbta_gtfs_static_url: str = "https://cdn.mbta.com/MBTA_GTFS.zip"
     mbta_vehicle_positions_url: str = "https://cdn.mbta.com/realtime/VehiclePositions.pb"
+    mbta_poll_interval_seconds: float = 15.0
+    mbta_http_timeout_seconds: float = 30.0
     kafka_bootstrap_servers: str = "localhost:19092"
     vehicle_positions_topic: str = "vehicle_positions"
+    vehicle_positions_consumer_group: str = "vehicle-position-postgres-writer"
+    mbta_consumer_batch_size: int = 100
+    mbta_realtime_stale_threshold_seconds: float = 60.0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

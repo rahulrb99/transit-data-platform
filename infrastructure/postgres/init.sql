@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS raw.ingestion_metadata (
 
 CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
     id BIGSERIAL PRIMARY KEY,
-    event_id TEXT UNIQUE,
+    event_id TEXT,
     ingested_at TIMESTAMPTZ NOT NULL,
     feed_timestamp TIMESTAMPTZ,
     vehicle_timestamp TIMESTAMPTZ,
@@ -39,3 +39,47 @@ CREATE TABLE IF NOT EXISTS realtime_vehicle_positions (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_event_id
     ON realtime_vehicle_positions (event_id);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_trip_sequence_time
+    ON realtime_vehicle_positions (trip_id, current_stop_sequence, vehicle_timestamp, feed_timestamp, ingested_at);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_vehicle_trip_sequence
+    ON realtime_vehicle_positions (vehicle_id, trip_id, current_stop_sequence);
+
+CREATE TABLE IF NOT EXISTS realtime_vehicle_position_dead_letters (
+    dead_letter_id BIGSERIAL PRIMARY KEY,
+    original_event_id TEXT,
+    topic TEXT NOT NULL,
+    partition INTEGER NOT NULL,
+    kafka_offset BIGINT NOT NULL,
+    processed_at TIMESTAMPTZ NOT NULL,
+    error_type TEXT NOT NULL,
+    error_reason TEXT NOT NULL,
+    raw_payload BYTEA NOT NULL,
+    vehicle_id TEXT,
+    trip_id TEXT,
+    CONSTRAINT uq_realtime_vehicle_position_dead_letter_record
+        UNIQUE (topic, partition, kafka_offset)
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_vehicle_position_dead_letters_processed_at
+    ON realtime_vehicle_position_dead_letters (processed_at DESC);
+
+CREATE TABLE IF NOT EXISTS realtime_pipeline_metrics (
+    metric_id BIGSERIAL PRIMARY KEY,
+    metric_timestamp TIMESTAMPTZ NOT NULL,
+    metric_kind TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    batch_size INTEGER NOT NULL,
+    events_received INTEGER NOT NULL,
+    events_persisted INTEGER NOT NULL,
+    duplicate_events INTEGER NOT NULL,
+    dead_letter_events INTEGER NOT NULL,
+    error_count INTEGER NOT NULL,
+    processing_duration_seconds DOUBLE PRECISION NOT NULL,
+    latest_source_event_timestamp TIMESTAMPTZ,
+    latest_ingestion_timestamp TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_pipeline_metrics_timestamp
+    ON realtime_pipeline_metrics (metric_timestamp DESC);

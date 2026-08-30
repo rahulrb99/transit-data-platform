@@ -56,6 +56,20 @@ def load_csv_bytes(table_name: str, raw_bytes: bytes) -> int:
     return row_count
 
 
+def create_static_gtfs_indexes() -> None:
+    index_statements = [
+        "CREATE INDEX IF NOT EXISTS idx_raw_stop_times_trip_sequence ON raw.stop_times (trip_id, stop_sequence)",
+        "CREATE INDEX IF NOT EXISTS idx_raw_stop_times_trip_stop ON raw.stop_times (trip_id, stop_id)",
+        "CREATE INDEX IF NOT EXISTS idx_raw_trips_trip_id ON raw.trips (trip_id)",
+        "CREATE INDEX IF NOT EXISTS idx_raw_trips_route_id ON raw.trips (route_id)",
+        "CREATE INDEX IF NOT EXISTS idx_raw_routes_route_id ON raw.routes (route_id)",
+        "CREATE INDEX IF NOT EXISTS idx_raw_stops_stop_id ON raw.stops (stop_id)",
+    ]
+    with connect() as conn, conn.cursor() as cur:
+        for statement in index_statements:
+            cur.execute(statement)
+
+
 def load_static_gtfs(zip_path: Path | None = None) -> None:
     source_zip = zip_path or latest_static_zip()
     with ZipFile(source_zip) as gtfs_zip:
@@ -65,6 +79,7 @@ def load_static_gtfs(zip_path: Path | None = None) -> None:
                 continue
             row_count = load_csv_bytes(table_name, gtfs_zip.read(member))
             print(f"Loaded raw.{table_name}: {row_count:,} rows")
+    create_static_gtfs_indexes()
 
 
 if __name__ == "__main__":

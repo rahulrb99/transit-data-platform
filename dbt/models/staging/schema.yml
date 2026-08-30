@@ -37,11 +37,25 @@ models:
         tests:
           - not_null
   - name: stg_realtime_vehicle_positions
+    description: >
+      Incremental, append-only staging model for realtime observations. The
+      PostgreSQL observation_id watermark captures newly inserted records even
+      when their source or ingestion timestamps are late.
     columns:
       - name: observation_id
         tests:
           - not_null
           - unique
+      - name: event_id
+        description: >
+          Deterministic realtime event identity. Legacy rows may be null;
+          non-null values are tested for uniqueness separately.
       - name: event_timestamp
         tests:
           - not_null
+      - name: route_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_routes')
+                field: route_id

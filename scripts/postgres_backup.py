@@ -6,12 +6,14 @@ import hashlib
 import os
 import re
 import subprocess
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
 from ingestion.config import Settings
 from ingestion.s3_archive import S3BackupArchive, build_s3_store, write_status
+
+UTC = timezone.utc  # noqa: UP017 - datetime.UTC is unavailable on Python 3.9.
 
 
 class BackupUploader(Protocol):
@@ -19,8 +21,11 @@ class BackupUploader(Protocol):
 
 
 def digest(path: Path) -> str:
+    checksum = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            checksum.update(chunk)
+    return checksum.hexdigest()
 
 
 def run(compose: list[str], command: str, *, stdin=None, stdout=None):
@@ -34,7 +39,11 @@ def backup(
     compose: list[str], output: Path, uploader: BackupUploader | None = None
 ) -> Path:
     output.mkdir(parents=True, exist_ok=True)
-    name = "transit_" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + ".dump"
+    name = (
+        "transit_"
+        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        + ".dump"
+    )
     target = output / name
     pending = target.with_suffix(".partial")
     try:

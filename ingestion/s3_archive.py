@@ -8,7 +8,7 @@ import logging
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -16,6 +16,7 @@ from ingestion.config import Settings
 from ingestion.raw_archive import ArchiveResult, _checksum_file
 
 LOGGER = logging.getLogger(__name__)
+UTC = timezone.utc  # noqa: UP017 - datetime.UTC is unavailable on Python 3.9.
 
 
 class S3UploadError(RuntimeError):

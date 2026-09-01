@@ -6,7 +6,9 @@ See [S3 backup and archive preparation](s3-backup-archive.md).
 
 ## Local backup
 
-Run from the repository using Python 3.11+ and Docker Compose:
+Run from the repository using Python 3.9+ and Docker Compose. The host operations
+path remains compatible with the Python 3.9 runtime provided by the current EC2 image;
+the containerized application continues to use its separately pinned Python runtime.
 
 ```bash
 python -m scripts.postgres_backup backup --output backups

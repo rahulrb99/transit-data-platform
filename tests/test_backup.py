@@ -1,8 +1,11 @@
+import ast
 from pathlib import Path
 
 import pytest
 
 from scripts import postgres_backup
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeUploader:
@@ -72,3 +75,16 @@ def test_restore_refuses_working_database_and_corruption(tmp_path):
     source.with_suffix(".dump.sha256").write_text("wrong")
     with pytest.raises(ValueError, match="checksum"):
         postgres_backup.restore([], source, "validation_restore")
+
+
+def test_host_backup_import_path_is_python_39_compatible() -> None:
+    for relative_path in (
+        "scripts/postgres_backup.py",
+        "ingestion/s3_archive.py",
+        "ingestion/raw_archive.py",
+        "ingestion/config.py",
+    ):
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        ast.parse(source, filename=relative_path, feature_version=(3, 9))
+        assert "from datetime import UTC" not in source
+        assert "hashlib.file_digest" not in source

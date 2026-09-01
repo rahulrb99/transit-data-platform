@@ -1,4 +1,4 @@
-# Minimal pinned dependencies for EC2 host operations such as S3 database backups.
+# Minimal Python 3.9-compatible dependencies for EC2 host operations such as S3 backups.
 annotated-types==0.8.0
 boto3==1.43.85
 botocore==1.43.85
@@ -13,4 +13,3 @@ six==1.17.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 urllib3==2.7.0
-

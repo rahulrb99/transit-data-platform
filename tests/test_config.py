@@ -28,28 +28,24 @@ def test_compose_only_environment_settings_are_allowed(tmp_path) -> None:
     assert settings.runtime_health_max_age_seconds == 120
 
 
-def test_production_rejects_default_database_password(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "APP_ENVIRONMENT=production\n"
-        "POSTGRES_HOST=postgres\n"
-        "POSTGRES_PASSWORD=transit\n"
-    )
-
+def test_production_rejects_default_database_password() -> None:
     with pytest.raises(ValidationError, match="POSTGRES_PASSWORD"):
-        Settings(_env_file=env_file)
+        Settings(
+            _env_file=None,
+            app_environment="production",
+            postgres_host="postgres",
+            postgres_password="transit",
+        )
 
 
-def test_production_rejects_localhost_database_host(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "APP_ENVIRONMENT=production\n"
-        "POSTGRES_HOST=localhost\n"
-        "POSTGRES_PASSWORD=not-a-default-password\n"
-    )
-
+def test_production_rejects_localhost_database_host() -> None:
     with pytest.raises(ValidationError, match="POSTGRES_HOST"):
-        Settings(_env_file=env_file)
+        Settings(
+            _env_file=None,
+            app_environment="production",
+            postgres_host="localhost",
+            postgres_password="not-a-default-password",
+        )
 
 
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "::1"])

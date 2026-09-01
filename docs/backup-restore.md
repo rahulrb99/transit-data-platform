@@ -39,13 +39,15 @@ Compare counts, min/max timestamps, static tables, migration ledger and uniquene
 Point an isolated dashboard/test process at the restored database before promoting it.
 A row-count print is only a smoke test, not proof of complete recovery.
 
-## Production backup policy (not provisioned)
+## Production backup schedule
 
 Prefix the command with `--production` before `backup` or `restore` to select the
 production Compose files and `.env.prod`. A production backup is successful only after
-the dump, checksum sidecar, and latest-success manifest are verified in S3. Schedule
-daily verified dumps and regular restore
-drills. A daily schedule implies up to 24 hours of database loss without replay.
+the dump, checksum sidecar, and latest-success manifest are verified in S3. The
+repository provides a systemd oneshot service and persistent daily timer under
+`infrastructure/systemd`. The timer starts at 03:15 UTC with up to 30 minutes of jitter.
+If the instance was offline, `Persistent=true` runs the missed backup after startup.
+A daily schedule implies up to 24 hours of database loss without replay.
 Use a private encrypted S3 bucket with public access blocked, versioning,
 least-privilege instance-role access, lifecycle limits and integrity manifests.
 Agree RPO/RTO and budget before enabling it.
@@ -53,6 +55,55 @@ Agree RPO/RTO and budget before enabling it.
 Back up raw_data, raw_archive, static ZIPs, migration scripts and deployment configuration.
 Do not copy a running PostgreSQL data directory as a substitute for a consistent dump.
 Same-EBS local copies protect against operator errors, not instance/volume loss.
+
+### Install the EC2 systemd schedule
+
+The units assume the documented deployment location `/opt/transit-data-platform`.
+Run these commands as the same unprivileged deployment user that can already run
+`docker compose`. The templated unit uses that account and adds the `docker`
+supplementary group. It does not store database or AWS credentials in systemd.
+
+```bash
+cd /opt/transit-data-platform
+DEPLOY_USER="$(id -un)"
+DEPLOY_GROUP="$(id -gn)"
+
+test -x .venv/bin/python || python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-ops.lock
+sudo install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" \
+  /opt/transit-data-platform/backups
+sudo install -m 0644 infrastructure/systemd/transit-postgres-backup@.service \
+  /etc/systemd/system/transit-postgres-backup@.service
+sudo install -m 0644 infrastructure/systemd/transit-postgres-backup@.timer \
+  /etc/systemd/system/transit-postgres-backup@.timer
+sudo systemd-analyze verify \
+  /etc/systemd/system/transit-postgres-backup@.service \
+  /etc/systemd/system/transit-postgres-backup@.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now "transit-postgres-backup@${DEPLOY_USER}.timer"
+sudo systemctl is-enabled "transit-postgres-backup@${DEPLOY_USER}.timer"
+sudo systemctl is-active "transit-postgres-backup@${DEPLOY_USER}.timer"
+sudo systemctl list-timers "transit-postgres-backup@${DEPLOY_USER}.timer"
+```
+
+Run one backup immediately through the same service context, then inspect its result:
+
+```bash
+DEPLOY_USER="$(id -un)"
+sudo systemctl start "transit-postgres-backup@${DEPLOY_USER}.service"
+sudo systemctl show "transit-postgres-backup@${DEPLOY_USER}.service" \
+  --property=Result \
+  --property=ExecMainStatus \
+  --property=ExecMainStartTimestamp \
+  --property=ExecMainExitTimestamp
+sudo journalctl -u "transit-postgres-backup@${DEPLOY_USER}.service" -n 100 --no-pager
+cat /opt/transit-data-platform/backups/.s3-upload-status.json
+```
+
+`systemctl start` returns nonzero when the dump, validation, or verified S3 upload
+fails. Do not add `Environment=AWS_ACCESS_KEY_ID` or other long-lived credentials;
+boto3 uses the EC2 role through its normal provider chain. Configure off-host alerting
+for failed units separately because journal-only failures are not notifications.
 
 ## Promotion and Kafka offsets
 

@@ -1,0 +1,27 @@
+[Unit]
+Description=MBTA transit PostgreSQL backup to S3 (%i)
+Documentation=file:/opt/transit-data-platform/docs/backup-restore.md
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+ConditionPathExists=/opt/transit-data-platform/.env.prod
+ConditionPathExists=/opt/transit-data-platform/.venv/bin/python
+
+[Service]
+Type=oneshot
+User=%i
+SupplementaryGroups=docker
+WorkingDirectory=/opt/transit-data-platform
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/transit-data-platform/.venv/bin/python -m scripts.postgres_backup --production backup --output /opt/transit-data-platform/backups
+UMask=0077
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full
+ReadWritePaths=/opt/transit-data-platform/backups
+

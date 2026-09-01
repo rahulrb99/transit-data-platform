@@ -142,5 +142,6 @@ The bucket and role are reported as created. Before launch, verify rather than r
    the metadata response hop limit to 2 so the Docker workload can use role credentials.
 4. From the instance and application container, verify the caller identity and perform a
    real encrypted upload/`HeadObject` check. Do not add access keys to `.env.prod`.
-5. Configure a daily host scheduler for the backup command and an off-host alert when
-   the backup or operational check exits nonzero.
+5. Install and enable the repository's systemd service and timer as documented in
+   [backup-restore.md](backup-restore.md). Configure an off-host alert when the backup
+   or operational check exits nonzero.

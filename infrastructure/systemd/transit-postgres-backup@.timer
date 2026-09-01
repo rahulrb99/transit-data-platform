@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the MBTA transit PostgreSQL backup daily (%i)
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+AccuracySec=1m
+Unit=transit-postgres-backup@%i.service
+
+[Install]
+WantedBy=timers.target
+

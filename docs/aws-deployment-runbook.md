@@ -50,6 +50,9 @@ Complete and record every item before the first Compose start:
 8. **Soak:** run the complete stack, retention, backup, and operational checks for at least
    24 hours. Review restarts, lag, stale data, dead letters, S3 failures, disk growth,
    memory, and the successful daily backup before launch.
+9. **Backup timer:** install and enable `transit-postgres-backup@.timer` using the exact
+   commands in [backup-restore.md](backup-restore.md). Run the oneshot service once and
+   verify the dump, checksum sidecar, encrypted S3 objects, and latest-success manifest.
 
 ## First host start
 
@@ -77,6 +80,10 @@ python -m scripts.postgres_backup --production backup --output backups
 docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml logs --tail 100 producer consumer dashboard
 docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml exec postgres pg_isready -U transit -d transit
 ```
+
+The command above is the manual fallback. Normal daily execution uses the systemd
+timer described in [backup-restore.md](backup-restore.md); it is intentionally not a
+long-running Compose service.
 
 ## GitHub OIDC
 

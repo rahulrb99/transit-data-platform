@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,8 +38,34 @@ def test_backup_timer_is_daily_persistent_and_jittered() -> None:
 
 def test_operations_lock_contains_backup_runtime_dependencies() -> None:
     requirements = (ROOT / "requirements-ops.lock").read_text(encoding="utf-8")
+    pinned_requirements = [
+        line
+        for line in requirements.splitlines()
+        if line and not line.startswith("#")
+    ]
 
-    assert "boto3==" in requirements
-    assert "pydantic-settings==" in requirements
+    assert "boto3==1.42.97" in pinned_requirements
+    assert "botocore==1.42.97" in pinned_requirements
+    assert "annotated-types==0.7.0" in pinned_requirements
+    assert "pydantic-settings==2.11.0" in pinned_requirements
+    assert "python-dotenv==1.2.1" in pinned_requirements
+    assert "s3transfer==0.16.0" in pinned_requirements
+    assert "typing-inspection==0.4.2" in pinned_requirements
+    assert "urllib3==2.6.3" in pinned_requirements
+    assert all(
+        re.fullmatch(r"[A-Za-z0-9_.-]+==[^=\s]+", line)
+        for line in pinned_requirements
+    )
     assert "streamlit==" not in requirements
     assert "dbt-postgres==" not in requirements
+
+
+def test_ci_validates_host_backup_runtime_on_python39() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "host-backup-python39:" in workflow
+    assert 'python-version: "3.9"' in workflow
+    assert "python -m pip install -r requirements-ops.lock" in workflow
+    assert "import scripts.postgres_backup, ingestion.s3_archive" in workflow

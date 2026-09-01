@@ -1,15 +1,15 @@
 # Minimal Python 3.9-compatible dependencies for EC2 host operations such as S3 backups.
-annotated-types==0.8.0
-boto3==1.43.85
-botocore==1.43.85
+annotated-types==0.7.0
+boto3==1.42.97
+botocore==1.42.97
 jmespath==1.1.0
 pydantic==2.13.5
-pydantic-settings==2.15.0
+pydantic-settings==2.11.0
 pydantic_core==2.46.5
 python-dateutil==2.9.0.post0
-python-dotenv==1.2.3
-s3transfer==0.19.2
+python-dotenv==1.2.1
+s3transfer==0.16.0
 six==1.17.0
-typing-inspection==0.4.4
+typing-inspection==0.4.2
 typing_extensions==4.16.0
-urllib3==2.7.0
+urllib3==2.6.3

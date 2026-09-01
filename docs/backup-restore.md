@@ -71,6 +71,7 @@ DEPLOY_USER="$(id -un)"
 DEPLOY_GROUP="$(id -gn)"
 
 test -x .venv/bin/python || python3 -m venv .venv
+.venv/bin/python --version
 .venv/bin/python -m pip install -r requirements-ops.lock
 sudo install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" \
   /opt/transit-data-platform/backups

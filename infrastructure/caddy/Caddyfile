@@ -1,0 +1,20 @@
+{
+	email {$CADDY_ACME_EMAIL}
+}
+
+{$PUBLIC_HOSTNAME} {
+	encode gzip zstd
+	reverse_proxy dashboard:8501
+	log {
+		output stdout
+		format json
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}

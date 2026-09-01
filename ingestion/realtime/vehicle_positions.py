@@ -311,6 +311,12 @@ def _ensure_table(cur: Cursor) -> None:
     )
     cur.execute(
         """
+        CREATE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_ingested_at
+            ON realtime_vehicle_positions (ingested_at)
+        """
+    )
+    cur.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_realtime_vehicle_positions_trip_sequence_time
             ON realtime_vehicle_positions (
                 trip_id,

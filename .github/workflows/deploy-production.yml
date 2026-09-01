@@ -1,0 +1,35 @@
+name: Production Deployment Plan (No AWS Changes)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ROLE_TO_ASSUME: ${{ vars.AWS_ROLE_TO_ASSUME }}
+  ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
+  EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+  POSTGRES_PASSWORD: workflow-validation-only
+  APP_IMAGE: registry.example/transit@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  S3_BUCKET_NAME: workflow-validation-only
+
+jobs:
+  plan:
+    name: Validate deployment inputs only
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate Compose files
+        run: docker compose --env-file .env.prod.example -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+      - name: Print manual deployment plan
+        run: |
+          echo "Deployment design: successful CI -> OIDC -> ECR digest -> SSM -> Compose."
+          echo "Required GitHub variables: AWS_REGION, AWS_ROLE_TO_ASSUME, ECR_REPOSITORY_URI, EC2_INSTANCE_ID."
+          echo "Require a protected production environment and a successful CI run for this exact SHA."
+          echo "It intentionally does not assume the AWS role, connect to EC2, or modify resources."
+          echo "Implementation and approval of the AWS-mutating steps remain a separate task."

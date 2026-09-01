@@ -1,0 +1,85 @@
+x-production-environment: &production-environment
+  APP_ENVIRONMENT: production
+  ARCHIVE_BACKEND: s3
+  S3_BUCKET_NAME: ${S3_BUCKET_NAME:?Set S3_BUCKET_NAME in .env.prod}
+  AWS_REGION: ${AWS_REGION:?Set AWS_REGION in .env.prod}
+
+x-production-logs: &production-logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    ports: !reset []
+
+  redpanda:
+    ports: !reset []
+    # Production has one internal broker listener and does not enable developer mode.
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092
+      - --advertise-kafka-addr=internal://redpanda:9092
+
+  dashboard:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable ECR image digest}
+    ports: !reset []
+    environment: *production-environment
+
+  producer:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable ECR image digest}
+    environment: *production-environment
+  consumer:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable ECR image digest}
+    environment: *production-environment
+  migrate:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable ECR image digest}
+    environment: *production-environment
+  retention:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable ECR image digest}
+    profiles: !reset []
+    restart: unless-stopped
+    stop_grace_period: 90s
+    command: ["python", "-m", "ingestion.retention", "--apply", "--interval-seconds", "3600"]
+    environment:
+      <<: *production-environment
+      RETENTION_MAX_BATCHES: ${RETENTION_MAX_BATCHES:-250}
+  redpanda-console:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.8@sha256:226d1f059b75399fe19182893c7184591c07b97afc8dfcf44eeb80c9a77a530f
+    container_name: transit-caddy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *production-logs
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?Set PUBLIC_HOSTNAME in .env.prod}
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?Set CADDY_ACME_EMAIL in .env.prod}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -2,11 +2,9 @@ from pathlib import Path
 
 from ingestion.config import get_settings
 from ingestion.db import connect
+from scripts.migrate_database import run_migrations
 
-SQL_FILES = (
-    Path("infrastructure/postgres/init.sql"),
-    Path("infrastructure/postgres/ci-fixtures.sql"),
-)
+FIXTURE_SQL = Path("infrastructure/postgres/ci-fixtures.sql")
 
 
 def main() -> None:
@@ -17,10 +15,11 @@ def main() -> None:
             "use a dedicated database whose name ends with '_ci'."
         )
 
+    completed = run_migrations()
+    print(f"Applied migrations: {', '.join(completed) if completed else 'none'}")
     with connect() as connection:
-        for sql_file in SQL_FILES:
-            connection.execute(sql_file.read_text(encoding="utf-8"))
-            print(f"Applied {sql_file}")
+        connection.execute(FIXTURE_SQL.read_text(encoding="utf-8"))
+        print(f"Applied {FIXTURE_SQL}")
 
 
 if __name__ == "__main__":

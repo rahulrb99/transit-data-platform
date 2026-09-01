@@ -36,6 +36,7 @@ ingestion/             Python ingestion package
 dbt/                   dbt project
 dashboard/             Streamlit app
 infrastructure/        SQL and local infrastructure assets
+infrastructure/postgres/migrations/  Versioned database migrations
 tests/                 Unit tests
 data/                  Local raw and processed data folders
 ```
@@ -48,13 +49,20 @@ data/                  Local raw and processed data folders
 cp .env.example .env
 ```
 
-2. Start PostgreSQL:
+Set `POSTGRES_PASSWORD` in `.env` before starting. Existing volumes require their
+existing database password; changing `.env` alone does not rotate it.
+
+2. Start the complete local runtime (no host producer/consumer needed):
 
 ```bash
-docker compose up -d postgres
+docker compose up -d --build
 ```
 
-3. Install Python dependencies:
+Open <http://localhost:8501>. PostgreSQL, Redpanda, producer, consumer, and dashboard
+are managed by Compose. See [Docker runtime](docs/docker-runtime.md) for restart,
+health, storage migration, and EC2 preparation details. No AWS deployment is included.
+
+3. For development/testing and dbt, install Python dependencies:
 
 ```bash
 python -m venv .venv
@@ -90,30 +98,44 @@ Actions jobs, deterministic PostgreSQL/dbt validation, and equivalent local comm
 See [docs/ml-training-dataset.md](docs/ml-training-dataset.md) for the delay-prediction
 training dataset design.
 
+See [docs/production-readiness.md](docs/production-readiness.md) for the current
+P0/P1/P2 production-readiness assessment, [docs/aws-deployment-runbook.md](docs/aws-deployment-runbook.md)
+for future deployment commands, and [docs/backup-restore.md](docs/backup-restore.md)
+for backup/restore procedures.
+Production S3 permissions, lifecycle recommendations, IAM-role behavior, and manual
+resource requirements are in [docs/s3-backup-archive.md](docs/s3-backup-archive.md).
+Before any production Compose command, run
+`python -m scripts.validate_production_environment --env-file .env.prod`; it rejects
+mutable image tags, placeholders, missing S3 configuration, and stored AWS access keys.
+
 ## Realtime Streaming
 
-Start PostgreSQL, Redpanda, and Redpanda Console:
+Start the complete realtime pipeline:
 
 ```powershell
-docker compose up -d postgres redpanda redpanda-init redpanda-console
+docker compose up -d
+docker compose logs --tail 50 producer consumer
 ```
 
-Open Redpanda Console:
+The console is optional and loopback-only. Start it with
+`docker compose --profile tools up -d redpanda-console`, then open:
 
 ```text
 http://localhost:8080
 ```
 
-Publish one MBTA vehicle-position snapshot to the `vehicle_positions` topic:
+For an optional one-shot smoke test, use the running app image (the normal producer
+already polls continuously; this extra snapshot may be deduplicated):
 
 ```powershell
-python -m ingestion.realtime.producer --once
+docker compose exec producer python -m ingestion.realtime.producer --once
 ```
 
-Consume events into PostgreSQL:
+The consumer is already running under Compose. Inspect its logs instead of starting
+a competing host consumer:
 
 ```powershell
-python -m ingestion.realtime.consumer --max-messages 500
+docker compose logs --tail 50 consumer
 ```
 
 The consumer group defaults to `VEHICLE_POSITIONS_CONSUMER_GROUP`, and
@@ -138,6 +160,42 @@ or its subsequent Kafka commit fails, the consumer stops without advancing past 
 record so Redpanda can replay it. This remains at-least-once processing, not
 exactly-once processing.
 
+### Retention and migrations
+
+Run versioned database migrations with:
+
+```powershell
+python scripts/migrate_database.py
+```
+
+The local Compose startup still initializes empty PostgreSQL volumes from
+`infrastructure/postgres/init.sql`; migrations are the forward-change mechanism for
+existing environments and CI fixtures.
+
+Realtime retention is explicit. Preview eligible rows without deleting:
+
+```powershell
+docker compose exec producer python -m ingestion.retention
+```
+
+Apply local maintenance deliberately with:
+
+```powershell
+docker compose --profile maintenance run --rm retention --apply
+```
+
+The production overlay runs this same fail-closed worker hourly. Development does
+not run retention automatically.
+
+`REALTIME_RETENTION_DAYS`, `METRICS_RETENTION_DAYS`, and
+`RAW_PAYLOAD_RETENTION_DAYS` control PostgreSQL and raw payload pruning. Raw
+protobuf files and expired observations/dead letters are verified before deletion.
+Development keeps them under `RAW_ARCHIVE_ROOT`; production uses the configured S3
+archive backend described in [S3 backup and archive preparation](docs/s3-backup-archive.md).
+Redpanda topic
+retention is bounded by `REDPANDA_TOPIC_RETENTION_MS` and
+`REDPANDA_TOPIC_RETENTION_BYTES`.
+
 ### Realtime pipeline health
 
 Each row in `realtime_pipeline_metrics` represents one PostgreSQL processing
@@ -147,10 +205,10 @@ processing duration and the latest source and ingestion timestamps in that unit.
 Metrics are committed in the same transaction as the corresponding operational
 data, before Kafka offsets advance.
 
-Run the local health command with:
+Run the health command inside the existing application container:
 
 ```powershell
-python -m ingestion.realtime.health
+docker compose exec producer python -m ingestion.realtime.health
 ```
 
 Freshness is `current UTC time - latest_source_event_timestamp`. The status is
@@ -193,6 +251,56 @@ FROM realtime_vehicle_positions
 ORDER BY ingested_at DESC
 LIMIT 20;
 ```
+
+## Dashboard Overview
+
+The dashboard starts with the full Compose stack. Start it separately with:
+
+```powershell
+docker compose up -d dashboard
+```
+
+The Overview page reads the existing static GTFS and realtime tables. It shows
+pipeline freshness, the latest source event, cumulative realtime observations,
+current vehicles, static route/stop/trip counts, dead-letter records, a vehicle
+map, and the 25 newest observations. The route selector filters the current vehicle
+table, map, and recent activity together. Route and stop names are enriched from
+the stored static GTFS tables, and trip headsigns provide destinations when the
+realtime trip ID matches the static snapshot. The dashboard never calls the MBTA
+API directly.
+
+"Vehicles currently observed" means the newest stored observation for each vehicle
+within a bounded 5,000-observation window that is also newer than
+`DASHBOARD_VEHICLE_MAX_AGE_SECONDS` (90 seconds by default). This keeps the query
+bounded as history grows and hides old markers when ingestion is stale. Coordinates
+that are missing or outside valid latitude and longitude ranges are excluded from
+the map without removing the vehicle from the table. Missing labels, stops, trips,
+headsigns, statuses, and coordinates display as `Unknown`. The dashboard does not
+display delay or on-time claims because VehiclePositions does not provide an
+authoritative delay value.
+
+The Boston-centered PyDeck map uses open map tiles without a paid API key. Marker
+colors group familiar MBTA route families. Hovering a marker shows a concise route,
+destination, vehicle, status, and timestamp summary; selecting it opens a persistent
+details panel. The page reports its last successful map refresh and automatically
+refreshes through the existing Streamlit fragment interval.
+
+Static catalog queries and exact aggregate counts are cached with bounded lifetimes.
+Current vehicles and recent activity use the indexed observation identifier,
+bounded result sets, parameterized route filters, and a short cache lifetime.
+
+`DASHBOARD_REFRESH_INTERVAL_SECONDS` sets the default realtime refresh interval
+(30 seconds by default). The sidebar can disable auto-refresh or select a different
+interval without changing ingestion. "Last realtime event" is the source event
+time from MBTA, while "Last dashboard refresh" is only the time Streamlit queried
+the database.
+
+Dashboard status has two independent parts. PostgreSQL connectivity is reported
+separately from realtime freshness. Realtime data is `Receiving` when its latest
+source event is no older than `MBTA_REALTIME_STALE_THRESHOLD_SECONDS`, `Stale` when
+it exceeds that threshold, and `No data` when no source timestamp exists. A failed
+section displays an unavailable message while the rest of the Overview remains
+usable; database errors and credentials are not exposed in the page.
 
 ## Initial MVP
 

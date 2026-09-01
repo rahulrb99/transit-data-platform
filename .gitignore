@@ -1,8 +1,15 @@
 .env
+.env.*
+!.env.example
+!.env.prod.example
+backups/
+data/archive/
+*.dump
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-tmp-*/
 .ruff_cache/
 .mypy_cache/
 .docker-tmp/

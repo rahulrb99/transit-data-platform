@@ -51,7 +51,7 @@ def test_operations_lock_contains_backup_runtime_dependencies() -> None:
     assert "python-dotenv==1.2.1" in pinned_requirements
     assert "s3transfer==0.16.0" in pinned_requirements
     assert "typing-inspection==0.4.2" in pinned_requirements
-    assert "urllib3==2.6.3" in pinned_requirements
+    assert "urllib3==1.26.20" in pinned_requirements
     assert all(
         re.fullmatch(r"[A-Za-z0-9_.-]+==[^=\s]+", line)
         for line in pinned_requirements

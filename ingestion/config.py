@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     archive_backend: Literal["local", "s3"] = "local"
     archive_status_path: Path = Path("data/archive/raw/.status/s3-archive.json")
     backup_status_path: Path = Path("backups/.s3-upload-status.json")
-    s3_bucket_name: Optional[str] = None
-    aws_region: Optional[str] = None
+    s3_bucket_name: Optional[str] = None  # noqa: UP045
+    aws_region: Optional[str] = None  # noqa: UP045
     s3_raw_archive_prefix: str = "raw-archives"
     s3_postgres_backup_prefix: str = "postgres-backups"
     s3_backup_max_age_hours: int = Field(default=26, gt=0)

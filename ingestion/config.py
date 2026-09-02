@@ -1,6 +1,5 @@
-from __future__ import annotations
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,7 +17,9 @@ class Settings(BaseSettings):
     raw_archive_root: Path = Path("data/archive/raw")
     processed_data_root: Path = Path("data/processed")
     mbta_gtfs_static_url: str = "https://cdn.mbta.com/MBTA_GTFS.zip"
-    mbta_vehicle_positions_url: str = "https://cdn.mbta.com/realtime/VehiclePositions.pb"
+    mbta_vehicle_positions_url: str = (
+        "https://cdn.mbta.com/realtime/VehiclePositions.pb"
+    )
     mbta_poll_interval_seconds: float = 15.0
     mbta_http_timeout_seconds: float = 30.0
     kafka_bootstrap_servers: str = "localhost:19092"
@@ -38,8 +39,8 @@ class Settings(BaseSettings):
     archive_backend: Literal["local", "s3"] = "local"
     archive_status_path: Path = Path("data/archive/raw/.status/s3-archive.json")
     backup_status_path: Path = Path("backups/.s3-upload-status.json")
-    s3_bucket_name: str | None = None
-    aws_region: str | None = None
+    s3_bucket_name: Optional[str] = None
+    aws_region: Optional[str] = None
     s3_raw_archive_prefix: str = "raw-archives"
     s3_postgres_backup_prefix: str = "postgres-backups"
     s3_backup_max_age_hours: int = Field(default=26, gt=0)
@@ -48,19 +49,29 @@ class Settings(BaseSettings):
     def validate_production_settings(self) -> "Settings":
         if self.app_environment.lower() != "production":
             return self
+
         insecure_values = {"", "transit", "password", "changeme", "change-me"}
+
         if self.postgres_password.lower() in insecure_values:
             raise ValueError("POSTGRES_PASSWORD must be explicitly set for production")
+
         if self.postgres_host.lower() in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("POSTGRES_HOST must not be localhost in production")
+
         if self.archive_backend != "s3":
             raise ValueError("ARCHIVE_BACKEND must be s3 in production")
+
         if not self.s3_bucket_name or not self.aws_region:
             raise ValueError("S3_BUCKET_NAME and AWS_REGION are required for production")
+
         return self
 
     # .env also contains Compose-only settings such as DASHBOARD_PORT.
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 def get_settings() -> Settings:

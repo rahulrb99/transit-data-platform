@@ -93,6 +93,7 @@ def test_production_snapshot_calculates_rates_reliability_and_scale(monkeypatch)
     )
     assert "metric_timestamp >= %s" in throughput_query
     assert "processed_at >= %s" in quality_query
+    assert "required event fields:%%" in quality_query
     assert f"LIMIT {observability.LATENCY_SCAN_LIMIT}" in latency_query
     assert "feed_timestamp <= ingested_at" in latency_query
     assert "COALESCE(vehicle_timestamp, feed_timestamp)" in latency_query

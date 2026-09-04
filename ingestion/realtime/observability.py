@@ -252,7 +252,7 @@ def load_production_metrics(
                 COUNT(*),
                 COUNT(*) FILTER (
                     WHERE error_reason LIKE
-                        'Missing or invalid required event fields:%'
+                        'Missing or invalid required event fields:%%'
                 ),
                 COUNT(*) FILTER (WHERE error_type = 'ValueError'),
                 COUNT(*) FILTER (

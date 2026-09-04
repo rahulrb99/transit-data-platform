@@ -13,7 +13,10 @@ class FakeUploader:
         self.fail = fail
         self.calls = []
 
-    def upload_backup(self, dump, checksum_sidecar):
+    def upload_backup(
+        self, dump, checksum_sidecar, *, backup_started_at_monotonic=None
+    ):
+        del backup_started_at_monotonic
         self.calls.append((dump, checksum_sidecar))
         if self.fail:
             raise RuntimeError("upload failed")
@@ -75,6 +78,29 @@ def test_restore_refuses_working_database_and_corruption(tmp_path):
     source.with_suffix(".dump.sha256").write_text("wrong")
     with pytest.raises(ValueError, match="checksum"):
         postgres_backup.restore([], source, "validation_restore")
+
+
+def test_restore_reports_successful_validation_duration(tmp_path, monkeypatch):
+    source = tmp_path / "test.dump"
+    source.write_bytes(b"valid")
+    source.with_suffix(".dump.sha256").write_text(
+        postgres_backup.digest(source),
+        encoding="ascii",
+    )
+    commands = []
+    monkeypatch.setattr(
+        postgres_backup,
+        "run",
+        lambda compose, command, **kwargs: commands.append(command),
+    )
+    timestamps = iter((10.0, 12.5))
+    monkeypatch.setattr(postgres_backup.time, "monotonic", lambda: next(timestamps))
+
+    duration = postgres_backup.restore([], source, "validation_restore")
+
+    assert duration == 2.5
+    assert len(commands) == 4
+    assert "createdb" in commands[1]
 
 
 def test_host_backup_import_path_is_python_39_compatible() -> None:

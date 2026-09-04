@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -7,6 +9,10 @@ from confluent_kafka import Consumer, TopicPartition
 
 from ingestion.config import get_settings
 from ingestion.db import connect
+from ingestion.realtime.observability import (
+    ProductionMetricsSnapshot,
+    load_production_metrics,
+)
 
 
 @dataclass(frozen=True)
@@ -202,17 +208,88 @@ def format_health_summary(
     return "\n".join(lines)
 
 
+def format_production_metrics(snapshot: ProductionMetricsSnapshot) -> str:
+    latency = snapshot.ingestion_latency_seconds
+    static = snapshot.static_gtfs_counts
+    success_rate = (
+        f"{snapshot.consumer_processing_success_rate:.3%}"
+        if snapshot.consumer_processing_success_rate is not None
+        else "unavailable"
+    )
+    return "\n".join(
+        [
+            "",
+            "Production Metrics",
+            "------------------",
+            f"Current ingestion:  {snapshot.current_ingestion_rate_events_per_minute:,.1f} events/min",
+            f"Peak ingestion:     {snapshot.peak_ingestion_rate_events_per_minute:,.0f} events/min",
+            f"Batches processed:  {snapshot.realtime_batches_processed_total:,}",
+            f"Failed attempts:    {snapshot.realtime_batches_failed_total:,}",
+            f"Database retries:   {snapshot.retry_count_total:,}",
+            f"Consumer success:   {success_rate}",
+            f"Latency samples:    {latency.count:,} ({snapshot.latency_window_minutes}m window)",
+            (
+                f"Latency avg/p95/p99: {_format_seconds(latency.average)} / "
+                f"{_format_seconds(latency.p95)} / {_format_seconds(latency.p99)}"
+            ),
+            f"Realtime rows est.: {snapshot.realtime_table_row_estimate:,}",
+            f"Database size:      {_format_bytes(snapshot.database_size_bytes)}",
+            f"Realtime table:     {_format_bytes(snapshot.realtime_table_size_bytes)}",
+            f"Static routes:      {_format_count(static['routes'])}",
+            f"Static stops:       {_format_count(static['stops'])}",
+            f"Static trips:       {_format_count(static['trips'])}",
+            f"Static stop_times:  {_format_count(static['stop_times'])}",
+            f"Metrics query:      {snapshot.metrics_query_duration_seconds:.3f} seconds",
+        ]
+    )
+
+
+def _format_seconds(value: float | None) -> str:
+    return f"{value:.3f}s" if value is not None else "n/a"
+
+
+def _format_bytes(value: int) -> str:
+    size = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024 or unit == "TiB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    raise AssertionError("unreachable")
+
+
+def _format_count(value: int | None) -> str:
+    return f"{value:,}" if value is not None else "unavailable"
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Report realtime pipeline health and metrics.")
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    args = parser.parse_args()
     settings = get_settings()
     summary = load_health_summary()
     lag_rows = load_consumer_lag()
+    generated_at = datetime.now(UTC)
+    snapshot = load_production_metrics(now=generated_at)
+    freshness_age, status = calculate_freshness(
+        summary.latest_source_event_timestamp,
+        generated_at,
+        settings.mbta_realtime_stale_threshold_seconds,
+    )
+    if args.json:
+        payload = snapshot.to_dict()
+        payload["application_health_status"] = status
+        payload["realtime_freshness_seconds"] = freshness_age
+        payload["consumer_lag"] = [row.__dict__ for row in lag_rows]
+        print(json.dumps(payload, sort_keys=True))
+        return
     print(
         format_health_summary(
             summary,
             lag_rows,
-            now=datetime.now(UTC),
+            now=generated_at,
             stale_threshold_seconds=settings.mbta_realtime_stale_threshold_seconds,
         )
+        + format_production_metrics(snapshot)
     )
 
 

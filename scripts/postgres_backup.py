@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -17,7 +18,13 @@ UTC = timezone.utc  # noqa: UP017 - datetime.UTC is unavailable on Python 3.9.
 
 
 class BackupUploader(Protocol):
-    def upload_backup(self, dump: Path, checksum_sidecar: Path) -> str: ...
+    def upload_backup(
+        self,
+        dump: Path,
+        checksum_sidecar: Path,
+        *,
+        backup_started_at_monotonic: float | None = None,
+    ) -> str: ...
 
 
 def digest(path: Path) -> str:
@@ -38,6 +45,7 @@ def run(compose: list[str], command: str, *, stdin=None, stdout=None):
 def backup(
     compose: list[str], output: Path, uploader: BackupUploader | None = None
 ) -> Path:
+    started_at = time.monotonic()
     output.mkdir(parents=True, exist_ok=True)
     name = (
         "transit_"
@@ -59,13 +67,18 @@ def backup(
         sidecar = target.with_suffix(".dump.sha256")
         sidecar.write_text(checksum + "\n", encoding="ascii")
         if uploader is not None:
-            uploader.upload_backup(target, sidecar)
+            uploader.upload_backup(
+                target,
+                sidecar,
+                backup_started_at_monotonic=started_at,
+            )
         return target
     finally:
         pending.unlink(missing_ok=True)
 
 
-def restore(compose: list[str], source: Path, target_database: str) -> None:
+def restore(compose: list[str], source: Path, target_database: str) -> float:
+    started_at = time.monotonic()
     if not re.fullmatch(r"[a-z][a-z0-9_]{0,47}_restore", target_database):
         raise ValueError("Restore target must be a new lower-case name ending in _restore")
     if digest(source) != source.with_suffix(".dump.sha256").read_text().strip():
@@ -79,6 +92,7 @@ def restore(compose: list[str], source: Path, target_database: str) -> None:
                      f'-U "$POSTGRES_USER" -d {target_database}', stdin=stream)
     run(compose, f'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d {target_database} '
                  '-c "SELECT count(*) AS observations FROM realtime_vehicle_positions"')
+    return max(time.monotonic() - started_at, 0.0)
 
 
 def main() -> None:
@@ -97,6 +111,7 @@ def main() -> None:
         compose += ["--env-file", ".env.prod", "-f", "docker-compose.yml",
                     "-f", "docker-compose.prod.yml"]
     if args.command == "backup":
+        backup_started_at = time.monotonic()
         settings = Settings(_env_file=".env.prod" if args.production else ".env")
         use_s3 = args.production or args.upload_s3
         uploader = None
@@ -117,11 +132,19 @@ def main() -> None:
                     success=False,
                     key="postgres-backup",
                     error=error,
+                    metadata={
+                        "backup_duration_seconds": max(
+                            time.monotonic() - backup_started_at,
+                            0.0,
+                        ),
+                        "checksum_verified": False,
+                    },
                 )
             raise
         print(completed)
     else:
-        restore(compose, args.backup, args.database)
+        duration_seconds = restore(compose, args.backup, args.database)
+        print(f"Restore validation completed in {duration_seconds:.3f} seconds")
 
 
 if __name__ == "__main__":

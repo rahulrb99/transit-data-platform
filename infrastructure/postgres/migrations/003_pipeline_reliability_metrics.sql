@@ -1,0 +1,3 @@
+ALTER TABLE realtime_pipeline_metrics
+    ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS failed_batch_count INTEGER NOT NULL DEFAULT 0;

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -144,7 +145,18 @@ class S3BackupArchive:
     def latest_manifest_key(self) -> str:
         return join_key(self.prefix, "_status/latest-success.json")
 
-    def upload_backup(self, dump: Path, checksum_sidecar: Path) -> str:
+    def upload_backup(
+        self,
+        dump: Path,
+        checksum_sidecar: Path,
+        *,
+        backup_started_at_monotonic: float | None = None,
+    ) -> str:
+        started_at = (
+            time.monotonic()
+            if backup_started_at_monotonic is None
+            else backup_started_at_monotonic
+        )
         date_prefix = datetime.now(UTC).strftime("%Y/%m/%d")
         dump_key = join_key(self.prefix, date_prefix, dump.name)
         sidecar_key = dump_key + ".sha256"
@@ -156,16 +168,37 @@ class S3BackupArchive:
                 "dump_uri": result.uri,
                 "checksum_sha256": result.checksum_sha256,
                 "bytes": result.bytes_uploaded,
+                "backup_duration_seconds": max(time.monotonic() - started_at, 0.0),
+                "checksum_verified": True,
             }
             with tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "latest-success.json"
                 path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
                 self.store.upload_verified(path, self.latest_manifest_key)
         except Exception as error:
-            write_status(self.status_path, success=False, key=dump_key, error=error)
+            write_status(
+                self.status_path,
+                success=False,
+                key=dump_key,
+                error=error,
+                metadata={
+                    "backup_duration_seconds": max(time.monotonic() - started_at, 0.0),
+                    "backup_size_bytes": dump.stat().st_size,
+                    "checksum_verified": False,
+                },
+            )
             LOGGER.exception("PostgreSQL backup S3 upload failed bucket=%s key=%s", self.store.bucket, dump_key)
             raise S3UploadError(f"PostgreSQL backup upload failed: {error}") from error
-        write_status(self.status_path, success=True, key=dump_key)
+        write_status(
+            self.status_path,
+            success=True,
+            key=dump_key,
+            metadata={
+                "backup_duration_seconds": max(time.monotonic() - started_at, 0.0),
+                "backup_size_bytes": result.bytes_uploaded,
+                "checksum_verified": True,
+            },
+        )
         return result.uri
 
 
@@ -197,7 +230,14 @@ def join_key(*parts: str) -> str:
     return normalize_key(*parts)
 
 
-def write_status(path: Path, *, success: bool, key: str, error: Exception | None = None) -> None:
+def write_status(
+    path: Path,
+    *,
+    success: bool,
+    key: str,
+    error: Exception | None = None,
+    metadata: dict[str, object] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "checked_at": datetime.now(UTC).isoformat(),
@@ -205,6 +245,8 @@ def write_status(path: Path, *, success: bool, key: str, error: Exception | None
         "key": key,
         "error": f"{type(error).__name__}: {error}" if error else None,
     }
+    if metadata:
+        payload.update(metadata)
     fd, temporary_name = tempfile.mkstemp(prefix=".s3-status-", dir=path.parent)
     temporary = Path(temporary_name)
     try:

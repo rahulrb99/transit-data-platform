@@ -103,6 +103,11 @@ sudo journalctl -u "transit-postgres-backup@${DEPLOY_USER}.service" -n 100 --no-
 cat /opt/transit-data-platform/backups/.s3-upload-status.json
 ```
 
+The successful status includes `backup_duration_seconds`, `backup_size_bytes`, and
+`checksum_verified`. The same duration, size, and verification result are written to the
+S3 `_status/latest-success.json` manifest. See
+[Production metrics](production-metrics.md) for baseline collection commands.
+
 `systemctl start` returns nonzero when the dump, validation, or verified S3 upload
 fails. Do not add `Environment=AWS_ACCESS_KEY_ID` or other long-lived credentials;
 boto3 uses the EC2 role through its normal provider chain. Configure off-host alerting

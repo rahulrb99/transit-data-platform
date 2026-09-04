@@ -5,6 +5,8 @@ from typing import Self
 
 from scripts import migrate_database
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 class FakeResult:
     def __init__(self, rows: list[tuple[str]] | None = None) -> None:
@@ -72,3 +74,16 @@ def test_run_migrations_applies_only_pending_files(tmp_path: Path, monkeypatch) 
     assert applied == {"001_initial_schema", "002_retention_index"}
     assert any(query == "SELECT 2;" for query, _ in executed)
     assert not any(query == "SELECT 1;" for query, _ in executed)
+
+
+def test_reliability_metric_migration_matches_fresh_database_schema() -> None:
+    migration = (
+        ROOT / "infrastructure/postgres/migrations/003_pipeline_reliability_metrics.sql"
+    ).read_text(encoding="utf-8")
+    initial_schema = (ROOT / "infrastructure/postgres/init.sql").read_text(
+        encoding="utf-8"
+    )
+
+    for column in ("retry_count", "failed_batch_count"):
+        assert column in migration
+        assert column in initial_schema

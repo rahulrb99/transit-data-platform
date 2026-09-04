@@ -397,6 +397,41 @@ def test_metrics_persistence_failure_prevents_offset_commit(
     assert kafka_consumer.commits == []
 
 
+def test_successful_retry_records_failed_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contexts: list[PipelineMetricContext] = []
+
+    def persist(
+        records: list[object],
+        metric_context: PipelineMetricContext,
+    ) -> MetricPersistenceResult:
+        del records
+        contexts.append(metric_context)
+        if len(contexts) == 1:
+            raise psycopg.OperationalError("temporary outage")
+        return metric_result(1)
+
+    monkeypatch.setattr(consumer, "insert_vehicle_positions_with_metric", persist)
+    stop_event = threading.Event()
+    monkeypatch.setattr(stop_event, "wait", lambda delay: False)
+    context = PipelineMetricContext(
+        metric_kind="valid_batch",
+        topic="vehicle_positions",
+        batch_size=1,
+        latest_source_event_timestamp=None,
+        latest_ingestion_timestamp=None,
+        started_at_monotonic=1.0,
+    )
+
+    result = consumer.persist_batch_with_retry([object()], context, stop_event)
+
+    assert result is not None
+    assert contexts[0].retry_count == 0
+    assert contexts[1].retry_count == 1
+    assert contexts[1].failed_batch_count == 1
+
+
 def test_dead_letter_database_failure_prevents_offset_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

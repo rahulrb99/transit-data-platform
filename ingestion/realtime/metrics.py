@@ -15,6 +15,8 @@ class PipelineMetricContext:
     latest_source_event_timestamp: datetime | None
     latest_ingestion_timestamp: datetime | None
     started_at_monotonic: float
+    retry_count: int = 0
+    failed_batch_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,8 @@ class PipelineMetric:
     duplicate_events: int
     dead_letter_events: int
     error_count: int
+    retry_count: int
+    failed_batch_count: int
     processing_duration_seconds: float
     latest_source_event_timestamp: datetime | None
     latest_ingestion_timestamp: datetime | None
@@ -61,6 +65,8 @@ def build_pipeline_metric(
         duplicate_events=duplicate_count,
         dead_letter_events=dead_letter_count,
         error_count=error_count,
+        retry_count=context.retry_count,
+        failed_batch_count=context.failed_batch_count,
         processing_duration_seconds=duration_seconds,
         latest_source_event_timestamp=context.latest_source_event_timestamp,
         latest_ingestion_timestamp=context.latest_ingestion_timestamp,
@@ -81,6 +87,8 @@ def _ensure_pipeline_metrics_table(cur: Cursor) -> None:
             duplicate_events INTEGER NOT NULL,
             dead_letter_events INTEGER NOT NULL,
             error_count INTEGER NOT NULL,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            failed_batch_count INTEGER NOT NULL DEFAULT 0,
             processing_duration_seconds DOUBLE PRECISION NOT NULL,
             latest_source_event_timestamp TIMESTAMPTZ,
             latest_ingestion_timestamp TIMESTAMPTZ
@@ -109,10 +117,15 @@ def insert_pipeline_metric(cur: Cursor, metric: PipelineMetric) -> None:
             duplicate_events,
             dead_letter_events,
             error_count,
+            retry_count,
+            failed_batch_count,
             processing_duration_seconds,
             latest_source_event_timestamp,
             latest_ingestion_timestamp
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s
+        )
         """,
         (
             metric.metric_timestamp,
@@ -124,6 +137,8 @@ def insert_pipeline_metric(cur: Cursor, metric: PipelineMetric) -> None:
             metric.duplicate_events,
             metric.dead_letter_events,
             metric.error_count,
+            metric.retry_count,
+            metric.failed_batch_count,
             metric.processing_duration_seconds,
             metric.latest_source_event_timestamp,
             metric.latest_ingestion_timestamp,

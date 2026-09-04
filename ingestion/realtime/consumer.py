@@ -6,6 +6,7 @@ import logging
 import signal
 import threading
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import FrameType
 
@@ -134,10 +135,19 @@ def persist_batch_with_retry(
     stop_event: threading.Event,
 ) -> MetricPersistenceResult | None:
     retry_delay = INITIAL_DATABASE_RETRY_DELAY_SECONDS
+    retry_count = 0
     while True:
         try:
-            return insert_vehicle_positions_with_metric(records, metric_context)
+            return insert_vehicle_positions_with_metric(
+                records,
+                replace(
+                    metric_context,
+                    retry_count=retry_count,
+                    failed_batch_count=retry_count,
+                ),
+            )
         except psycopg.Error as error:
+            retry_count += 1
             LOGGER.warning(
                 "PostgreSQL batch persistence failed for %s events; retrying in %.1f seconds: %s",
                 len(records),
@@ -155,10 +165,15 @@ def persist_dead_letter_with_retry(
     stop_event: threading.Event,
 ) -> MetricPersistenceResult | None:
     retry_delay = INITIAL_DATABASE_RETRY_DELAY_SECONDS
+    retry_count = 0
     while True:
         try:
-            return insert_dead_letter_with_metric(record, metric_context)
+            return insert_dead_letter_with_metric(
+                record,
+                replace(metric_context, retry_count=retry_count),
+            )
         except psycopg.Error as error:
+            retry_count += 1
             LOGGER.warning(
                 "Dead-letter persistence failed topic=%s partition=%s offset=%s; "
                 "retrying in %.1f seconds: %s",

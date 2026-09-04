@@ -70,6 +70,17 @@ def main():
         [*compose, "exec", "-T", "postgres", "df", "-h", "/var/lib/postgresql/data"],
         [*compose, "exec", "-T", "producer", "df", "-h", "/app/data/raw", "/app/data/archive/raw"],
         ["docker", "stats", "--no-stream"],
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.Name}} restarts={{.RestartCount}} started={{.State.StartedAt}}",
+            "transit-postgres",
+            "transit-redpanda",
+            "transit-producer",
+            "transit-consumer",
+            "transit-dashboard",
+        ],
         [*compose, "logs", "--tail", "20", "producer", "consumer"],
     ]
     if args.production:
@@ -99,7 +110,16 @@ def main():
             failed = True
             print("PostgreSQL backup upload FAILED:", backup_status.get("error"))
         else:
-            print("PostgreSQL backup upload succeeded:", backup_status.get("checked_at"))
+            print(
+                "PostgreSQL backup upload succeeded:",
+                backup_status.get("checked_at"),
+                "duration_seconds=",
+                backup_status.get("backup_duration_seconds", "unavailable"),
+                "size_bytes=",
+                backup_status.get("backup_size_bytes", "unavailable"),
+                "checksum_verified=",
+                backup_status.get("checksum_verified", "unavailable"),
+            )
     raise SystemExit(1 if failed else 0)
 
 

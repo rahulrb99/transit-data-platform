@@ -102,6 +102,8 @@ See [docs/production-readiness.md](docs/production-readiness.md) for the current
 P0/P1/P2 production-readiness assessment, [docs/aws-deployment-runbook.md](docs/aws-deployment-runbook.md)
 for future deployment commands, and [docs/backup-restore.md](docs/backup-restore.md)
 for backup/restore procedures.
+Production metric definitions and baseline commands are documented in
+[docs/production-metrics.md](docs/production-metrics.md).
 Production S3 permissions, lifecycle recommendations, IAM-role behavior, and manual
 resource requirements are in [docs/s3-backup-archive.md](docs/s3-backup-archive.md).
 Before any production Compose command, run

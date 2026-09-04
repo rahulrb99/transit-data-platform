@@ -79,6 +79,8 @@ CREATE TABLE IF NOT EXISTS realtime_pipeline_metrics (
     duplicate_events INTEGER NOT NULL,
     dead_letter_events INTEGER NOT NULL,
     error_count INTEGER NOT NULL,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    failed_batch_count INTEGER NOT NULL DEFAULT 0,
     processing_duration_seconds DOUBLE PRECISION NOT NULL,
     latest_source_event_timestamp TIMESTAMPTZ,
     latest_ingestion_timestamp TIMESTAMPTZ

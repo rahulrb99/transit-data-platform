@@ -2,6 +2,7 @@ import pytest
 from psycopg.errors import UniqueViolation
 
 from ingestion.db import connect
+from ingestion.realtime.observability import load_production_metrics
 
 pytestmark = pytest.mark.integration
 
@@ -41,3 +42,15 @@ def test_realtime_event_identity_is_enforced_by_postgres() -> None:
             )
             """
         )
+
+
+def test_production_metrics_query_runs_against_postgres() -> None:
+    require_isolated_ci_fixture()
+
+    snapshot = load_production_metrics()
+
+    assert snapshot.realtime_events_received_total == 0
+    assert snapshot.realtime_table_row_estimate >= 0
+    assert snapshot.database_size_bytes > 0
+    assert snapshot.realtime_table_size_bytes > 0
+    assert snapshot.ingestion_latency_seconds.count == 0

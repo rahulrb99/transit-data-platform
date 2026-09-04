@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import json
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -152,7 +153,14 @@ def test_backup_manifest_is_uploaded_last(tmp_path):
 
     assert uri.endswith("/backup.dump")
     assert client.uploads[-1][1] == "postgres-backups/_status/latest-success.json"
-    assert archive_health.load_status(status)["success"] is True
+    payload = archive_health.load_status(status)
+    assert payload["success"] is True
+    assert payload["backup_size_bytes"] == 8
+    assert payload["backup_duration_seconds"] >= 0
+    assert payload["checksum_verified"] is True
+    manifest = json.loads(client.uploads[-1][3])
+    assert manifest["bytes"] == 8
+    assert manifest["checksum_verified"] is True
 
 
 def test_archive_health_reports_failure_and_stale_backup(tmp_path, monkeypatch):

@@ -32,6 +32,10 @@ from data import (
 )
 from ingestion.config import get_settings
 from ingestion.realtime.health import calculate_freshness
+from ingestion.realtime.observability import (
+    ProductionMetricsSnapshot,
+    load_production_metrics,
+)
 
 REFRESH_OPTIONS_SECONDS = (15, 30, 60, 120, 300)
 settings = get_settings()
@@ -72,6 +76,11 @@ def cached_route_summary() -> pd.DataFrame:
     return load_route_summary()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_production_metrics() -> ProductionMetricsSnapshot:
+    return load_production_metrics()
+
+
 def format_age(age_seconds: float | None) -> str:
     if age_seconds is None:
         return UNKNOWN_VALUE
@@ -82,6 +91,10 @@ def format_age(age_seconds: float | None) -> str:
 
 def metric_value(value: int | None) -> str:
     return f"{value:,}" if value is not None else "Unavailable"
+
+
+def decimal_metric(value: float | None, suffix: str = "") -> str:
+    return f"{value:,.2f}{suffix}" if value is not None else "Unavailable"
 
 
 def closest_refresh_option(configured_seconds: int) -> int:
@@ -331,6 +344,48 @@ def render_live_monitoring() -> None:
     static_metrics[0].metric("Routes", metric_value(static_summary.get("routes")))
     static_metrics[1].metric("Stops", metric_value(static_summary.get("stops")))
     static_metrics[2].metric("Trips", metric_value(static_summary.get("trips")))
+
+    with st.expander("Engineering metrics"):
+        try:
+            production_metrics = cached_production_metrics()
+        except psycopg.Error:
+            st.warning("Production metrics are temporarily unavailable.")
+        else:
+            engineering_metrics = st.columns(4)
+            engineering_metrics[0].metric(
+                "Ingestion rate",
+                decimal_metric(
+                    production_metrics.current_ingestion_rate_events_per_minute,
+                    " events/min",
+                ),
+            )
+            engineering_metrics[1].metric(
+                "Peak rate",
+                decimal_metric(
+                    production_metrics.peak_ingestion_rate_events_per_minute,
+                    " events/min",
+                ),
+            )
+            engineering_metrics[2].metric(
+                "P95 ingestion latency",
+                decimal_metric(
+                    production_metrics.ingestion_latency_seconds.p95,
+                    " sec",
+                ),
+            )
+            success_rate = production_metrics.consumer_processing_success_rate
+            engineering_metrics[3].metric(
+                "Consumer success",
+                decimal_metric(
+                    success_rate * 100 if success_rate is not None else None,
+                    "%",
+                ),
+            )
+            st.caption(
+                f"Rates use a trailing {production_metrics.rate_window_minutes}-minute "
+                f"window; latency uses {production_metrics.latency_window_minutes} "
+                "minutes. Totals cover retained metrics history."
+            )
 
     st.subheader("Live vehicle activity")
     selected_route_name = (

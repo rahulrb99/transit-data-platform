@@ -1,324 +1,521 @@
-# Transit Data Platform
+# MBTA Real-Time Transit Data Platform
 
-Local data engineering platform for MBTA transit data.
+Production-deployed transit data platform that combines MBTA GTFS schedules and
+GTFS-Realtime vehicle positions in a streaming PostgreSQL analytics system.
 
-The project ingests MBTA GTFS static schedule data, preserves original raw files, records ingestion metadata, loads raw tables into PostgreSQL, transforms them with dbt into analytical models, and exposes summary metrics through a Streamlit dashboard.
+[![CI](https://github.com/rahulrb99/transit-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulrb99/transit-data-platform/actions/workflows/ci.yml)
+![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-EC2%20%7C%20ECR%20%7C%20S3-232F3E?logo=amazonwebservices&logoColor=white)
+![dbt](https://img.shields.io/badge/dbt-Analytics-FF694B?logo=dbt&logoColor=white)
 
-## Architecture
+**[Live production dashboard](https://mbtatransit.xyz)**
 
-```text
-                    BATCH
-MBTA GTFS Static -> Python ingestion -> raw storage -> PostgreSQL -> dbt
+## Overview
 
-                    STREAM
-MBTA GTFS-Realtime -> Python producer -> Redpanda -> Python consumer -> PostgreSQL
+This repository is an end-to-end data engineering system, not a standalone ETL
+notebook. It preserves raw MBTA feeds, decouples realtime collection from persistence
+with Redpanda, writes validated events to PostgreSQL with at-least-once semantics, builds
+analytical models with dbt, and serves a live Boston-area vehicle map through Streamlit.
+
+The production stack runs on one AWS EC2 instance using Docker Compose. Caddy terminates
+HTTPS, EBS-backed Docker volumes retain operational state, an EC2 IAM role authorizes
+encrypted S3 archives and backups, and a systemd timer runs the PostgreSQL backup workflow.
+
+```mermaid
+flowchart LR
+    subgraph external[External data]
+        staticFeed[MBTA GTFS<br/>static ZIP]
+        realtimeFeed[MBTA GTFS-Realtime<br/>VehiclePositions]
+        rider[Dashboard user]
+    end
+
+    subgraph aws[AWS]
+        ecr[ECR repository<br/>immutable image digest]
+        s3[(S3<br/>raw archives and backups)]
+
+        subgraph ec2[EC2 - Docker Compose and host operations]
+            subgraph ingestion[Ingestion]
+                staticLoader[Static GTFS loader]
+                producer[Realtime producer<br/>15-second polling]
+            end
+
+            subgraph streaming[Streaming]
+                redpanda[[Redpanda / Kafka<br/>vehicle_positions - 3 partitions]]
+            end
+
+            subgraph processing[Processing]
+                consumer[Batched consumer]
+                validation{Event validation}
+                persistence[Idempotent batch persistence<br/>retry on database failure]
+                deadletter[Dead-letter persistence]
+            end
+
+            subgraph storage[Operational storage]
+                postgres[(PostgreSQL<br/>static, realtime and metrics)]
+                rawVolume[(Raw feed volume)]
+            end
+
+            subgraph analytics[Analytics and presentation]
+                dbt[dbt batch transformations<br/>staging - intermediate - marts]
+                dashboard[Streamlit dashboard<br/>live map and engineering metrics]
+                caddy[Caddy<br/>HTTPS / TLS]
+            end
+
+            subgraph operations[Operations]
+                health[Health and metrics CLI<br/>JSON snapshot]
+                retention[Hourly retention worker]
+                backup[Daily systemd backup]
+            end
+        end
+    end
+
+    staticFeed --> staticLoader
+    staticLoader --> rawVolume
+    staticLoader --> postgres
+    realtimeFeed --> producer
+    producer --> rawVolume
+    producer ==> redpanda ==> consumer ==> validation
+    validation -->|valid| persistence --> postgres
+    validation -->|invalid| deadletter --> postgres
+    postgres --> dbt
+    postgres --> dashboard
+    dbt --> postgres
+    rider -->|HTTPS| caddy --> dashboard
+    ecr -.->|pinned release image| producer
+    ecr -.-> dashboard
+    rawVolume -.-> retention
+    retention -->|verified archive| s3
+    postgres -.-> backup -->|dump, checksum, manifest| s3
+    producer -.-> health
+    redpanda -.-> health
+    consumer -.-> health
+    postgres -.-> health
 ```
 
-## Stack
+The primary realtime path is emphasized from the MBTA feed through the broker,
+consumer, validation and PostgreSQL. Archival, transformation, presentation and
+operational controls remain separate from the event-processing transaction.
 
-| Layer | Technology |
+## Production Snapshot
+
+| Streaming | Reliability | Latency | Storage and reference data |
+| --- | --- | --- | --- |
+| **12,495,172** events received | **100%** processing success | **1.71 s** p50 ingestion latency | **~8.1 GB** PostgreSQL database |
+| **12,495,172** events persisted | **0** failed batches | **2.73 s** p95 ingestion latency | **~7.26 GB** realtime table |
+| **1,068 events/min** current rate | **0** retries | **2.73 s** p99 ingestion latency | **400** routes / **10,309** stops |
+| **3,133 events/min** observed peak | **0** dead letters / invalid records | **17.25 s** realtime freshness | **189,398** trips / **5,174,011** stop times |
+| **0 lag** across 3 partitions | **0** missing IDs / schema failures | **0.285 s** metrics query | **194** calendar / **157** exception records |
+
+> Point-in-time production snapshot captured 2026-09-07. Values are operational
+> observations, not formal benchmarks or SLAs. Event totals cover retained metrics
+> history and are not presented as lifetime or daily throughput.
+
+Production image at capture time:
+`sha256:443c5c0129a9d9af98abb06d02a3ad741c85f2af1874c88881d572c8bc6fdd35`.
+
+## Data Pipeline
+
+### Static GTFS ingestion
+
+The static loader downloads the MBTA GTFS ZIP, preserves the original artifact, records
+its source, ingestion timestamp, row counts and SHA-256 checksum, then stages a complete
+feed before atomically activating the `raw` tables. A failed load leaves the prior static
+snapshot available.
+
+### Real-time data pipeline
+
+The producer polls MBTA `VehiclePositions.pb` every 15 seconds by default, reuses its HTTP
+session, parses protobuf records into stable JSON events, and publishes them to a
+three-partition `vehicle_positions` topic. The original protobuf payload is retained for
+later archive processing.
+
+```mermaid
+flowchart TB
+    feed[MBTA VehiclePositions.pb] --> producer[Python producer<br/>fetch - parse - normalize]
+    producer --> event[JSON event<br/>event_id as Kafka key]
+
+    subgraph broker[Redpanda topic - bounded retention]
+        direction LR
+        p0[Partition 0]
+        p1[Partition 1]
+        p2[Partition 2]
+    end
+
+    event --> p0
+    event --> p1
+    event --> p2
+    p0 --> consumer
+    p1 --> consumer
+    p2 --> consumer
+
+    subgraph worker[Consumer - at-least-once processing]
+        consumer[Consumer group<br/>manual offset control]
+        decode{Decode and validate}
+        buffer[Valid-event batch buffer<br/>default 100]
+        insert[Single PostgreSQL transaction<br/>ON CONFLICT event_id DO NOTHING]
+        retry[Exponential database retry<br/>capped at 30 seconds]
+        reject[Rejected Kafka record]
+        dlq[Idempotent dead-letter transaction<br/>raw payload and error context]
+        commit[Sync commit of next offsets]
+
+        consumer --> decode
+        decode -->|valid| buffer --> insert
+        insert -->|database failure| retry --> insert
+        insert -->|transaction committed| commit
+        decode -->|invalid| reject --> dlq --> commit
+    end
+
+    insert --> realtime[(realtime_vehicle_positions)]
+    dlq --> deadletters[(realtime_vehicle_position_dead_letters)]
+    insert --> metrics[(realtime_pipeline_metrics)]
+    dlq --> metrics
+    metrics --> health[Health, throughput and latency snapshot]
+```
+
+Automatic offset commits and offset storage are disabled. Valid rows and their metrics
+commit together before Kafka offsets advance. Replays are safe because `event_id` is
+unique and inserts use `ON CONFLICT DO NOTHING`; this is deliberately described as
+at-least-once processing with idempotent persistence, not exactly-once delivery.
+
+### Transformation and analytics
+
+dbt models the stored data through four logical layers:
+
+```text
+PostgreSQL raw/public sources
+        -> staging
+        -> intermediate schedule and feature models
+        -> dimensional marts and ML training dataset
+```
+
+The realtime staging and ML training relations are incremental. The project includes a
+four-stops-ahead delay training dataset, but it does not train or deploy an ML model.
+The Streamlit dashboard reads operational/static PostgreSQL data directly rather than
+placing dbt in the live ingestion path.
+
+## Reliability & Observability
+
+```mermaid
+flowchart LR
+    subgraph pipeline[Operational pipeline]
+        feed[MBTA feed] --> producer[Producer] --> broker[Redpanda] --> consumer[Consumer] --> postgres[(PostgreSQL)]
+    end
+
+    subgraph signals[Measured signals]
+        producerSignals[Received and published events<br/>feed metadata and checksum]
+        brokerSignals[Committed offsets<br/>lag by partition]
+        consumerSignals[Persisted and duplicate events<br/>batch failures - retries - dead letters<br/>validation and schema failures]
+        latencySignals[Feed freshness - event age<br/>ingestion latency<br/>count - avg - p50 - p95 - p99 - max]
+        databaseSignals[Estimated realtime rows<br/>database and table size<br/>latest persisted event - query duration]
+        hostSignals[Container health and restarts<br/>CPU - memory - disk]
+        backupSignals[Backup success - duration - size<br/>checksum verification]
+    end
+
+    producer -.-> producerSignals
+    broker -.-> brokerSignals
+    consumer -.-> consumerSignals
+    feed -.-> latencySignals
+    postgres -.-> latencySignals
+    postgres -.-> databaseSignals
+    producer -.-> hostSignals
+    consumer -.-> hostSignals
+    postgres -.-> hostSignals
+    postgres -.-> backupSignals
+
+    subgraph outputs[Operational views]
+        json[Machine-readable JSON health CLI]
+        dashboard[Streamlit engineering metrics]
+        logs[Bounded container and service logs]
+        status[S3 and local backup status manifests]
+    end
+
+    producerSignals --> json
+    brokerSignals --> json
+    consumerSignals --> json
+    latencySignals --> json
+    databaseSignals --> json
+    hostSignals --> logs
+    backupSignals --> status
+    json --> dashboard
+```
+
+Observability is derived from the same transactional records as the pipeline rather
+than from per-event logging. Queries use retention windows, a 25,000-row latency scan
+bound, PostgreSQL statistics for table scale, a 10-second statement timeout, and a
+60-second dashboard cache.
+
+The time signals answer different questions:
+
+| Signal | Meaning |
 | --- | --- |
-| Language | Python |
-| Warehouse | PostgreSQL |
-| Transformation | dbt |
-| Orchestration | Airflow |
-| Streaming | Redpanda |
-| Dashboard | Streamlit |
-| Containers | Docker Compose |
-| Testing | pytest + dbt tests |
-| CI | GitHub Actions |
+| **Feed freshness** | Current UTC time minus the newest MBTA source timestamp. |
+| **Event age** | Snapshot time minus the vehicle timestamp, falling back to feed time. |
+| **Ingestion latency** | PostgreSQL ingestion time minus MBTA feed generation time. |
 
-## Project Layout
+Invalid, missing, future, or implausibly old timestamps are excluded rather than replaced
+with zero. Consumer lag is point-in-time broker state. Restart counts are point-in-time
+Docker state, and metrics totals cover the configured retention window rather than the
+lifetime of the deployment.
 
-```text
-dags/                  Airflow DAGs
-ingestion/             Python ingestion package
-dbt/                   dbt project
-dashboard/             Streamlit app
-infrastructure/        SQL and local infrastructure assets
-infrastructure/postgres/migrations/  Versioned database migrations
-tests/                 Unit tests
-data/                  Local raw and processed data folders
+Human-readable and JSON snapshots are available from the running application image:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml \
+  exec -T consumer python -m ingestion.realtime.health
+
+docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml \
+  exec -T consumer python -m ingestion.realtime.health --json
 ```
 
-## Local Setup
+See [Production metrics](docs/production-metrics.md) for definitions, windows,
+limitations and baseline collection commands.
 
-1. Copy environment variables:
+## Data Model
+
+| Layer | Relations | Purpose |
+| --- | --- | --- |
+| `raw` | `agency`, `routes`, `stops`, `trips`, `stop_times`, `calendar`, `calendar_dates` | Atomically activated GTFS reference data. |
+| `raw` | `ingestion_metadata`, `static_load_history` | Source, checksum, archive path and load-manifest history. |
+| `public` | `realtime_vehicle_positions` | Parsed vehicle observations with event, trip, stop, position and source timestamps. |
+| `public` | `realtime_vehicle_position_dead_letters` | Idempotent rejected Kafka records and diagnostic context. |
+| `public` | `realtime_pipeline_metrics` | Transaction-aligned batch, duplicate, retry, failure and timing metrics. |
+| dbt staging | `stg_routes`, `stg_stops`, `stg_trips`, `stg_stop_times`, `stg_realtime_vehicle_positions` | Typed, consistently named source models. |
+| dbt intermediate | `int_trip_stop_times`, `int_delay_prediction_features` | Schedule joins and leakage-aware feature engineering. |
+| dbt marts | `dim_route`, `dim_stop`, `fct_stop_arrival`, `ml_delay_training` | Analytical dimensions, schedule facts and supervised-learning rows. |
+
+Versioned migrations are serialized with a PostgreSQL advisory lock, executed in a
+transaction, and protected by checksums and a lock timeout. Existing deployments advance
+through `infrastructure/postgres/migrations`; `init.sql` initializes only empty volumes.
+
+## Dashboard
+
+The Streamlit dashboard provides:
+
+- A Boston-centered live vehicle map with route, destination, vehicle, status and update details.
+- Automatic refresh with stale-data and database-connectivity states kept separate.
+- Current vehicles, route filtering and the 25 newest observations.
+- Static route, stop, trip and scheduled-arrival counts.
+- Ingestion rate, peak rate, p95 latency and consumer processing success.
+
+Map queries scan a bounded recent-observation window, reject invalid coordinates and hide
+vehicles older than the configured maximum age. The dashboard never calls MBTA directly
+and does not present VehiclePositions as authoritative delay or on-time data.
+
+> Add dashboard screenshot here.
+
+## Production Deployment
+
+```mermaid
+flowchart TB
+    developer[Developer] --> github[GitHub repository]
+    github --> actions[GitHub Actions CI<br/>lint - tests - PostgreSQL/dbt - Compose build]
+    actions -.->|validated commit<br/>operator-controlled release| ecr[ECR application image<br/>pinned by sha256 digest]
+
+    user[Public user] -->|TCP 80 / 443 only| caddy
+    mbta[MBTA feeds] -->|outbound HTTPS| producer
+
+    subgraph aws[AWS account]
+        role[EC2 IAM instance role]
+        s3[(Private S3 bucket<br/>SSE-S3 and lifecycle policies)]
+
+        subgraph instance[EC2 instance]
+            ebs[(EBS-backed Docker storage)]
+            systemd[systemd daily backup timer]
+
+            subgraph compose[Docker Compose]
+                caddy[Caddy<br/>TLS and reverse proxy]
+                dashboard[Streamlit<br/>internal 8501]
+                producer[Producer]
+                redpanda[[Redpanda<br/>internal 9092]]
+                consumer[Consumer]
+                postgres[(PostgreSQL<br/>internal 5432)]
+                retention[Hourly retention]
+
+                producer --> redpanda --> consumer --> postgres
+                caddy --> dashboard --> postgres
+                retention --> postgres
+            end
+
+            ecr -->|immutable APP_IMAGE| producer
+            ecr --> consumer
+            ecr --> dashboard
+            ecr --> retention
+            ebs --- postgres
+            ebs --- redpanda
+            systemd -->|verified custom-format dump| postgres
+        end
+
+        role -->|SDK credential chain| s3
+        retention -->|verified raw archives| s3
+        systemd -->|dump, SHA-256 sidecar<br/>latest-success manifest| s3
+    end
+```
+
+The application services share one digest-pinned image. PostgreSQL, Redpanda and
+Streamlit have no production host bindings; only Caddy publishes ports 80 and 443.
+The deployment workflow in this repository currently validates inputs and documents the
+OIDC/ECR/SSM plan but intentionally does not mutate AWS, so image publication and host
+rollout remain operator-controlled.
+
+Current deployment image at the 2026-09-07 snapshot:
+
+```text
+sha256:443c5c0129a9d9af98abb06d02a3ad741c85f2af1874c88881d572c8bc6fdd35
+```
+
+See the [AWS deployment runbook](docs/aws-deployment-runbook.md) for environment
+validation, immutable-image rollout and health-check commands.
+
+## Backup & Disaster Recovery
+
+The host systemd timer schedules a daily PostgreSQL backup at 03:15 UTC with up to 30
+minutes of randomized delay. The workflow:
+
+1. Streams a PostgreSQL custom-format dump to a temporary file.
+2. Validates the dump with `pg_restore --list` and computes a SHA-256 checksum.
+3. Uploads the dump and checksum sidecar to S3 using explicit SSE-S3 (`AES256`).
+4. Verifies uploaded size, metadata, checksum and encryption with `HeadObject`.
+5. Publishes `latest-success.json` only after successful verification.
+
+Failed uploads remain visible and retain the local dump for diagnosis. Restore validation
+requires a new lower-case database ending in `_restore`, verifies the sidecar, and performs
+a single-transaction restore without replacing the working database. These controls support
+recovery testing; they do not constitute a zero-loss recovery guarantee.
+
+Detailed procedures: [Backup and restore](docs/backup-restore.md) and
+[S3 archive design](docs/s3-backup-archive.md).
+
+## Security
+
+- Production configuration requires an immutable ECR digest and rejects placeholders,
+  development mode and stored AWS access keys.
+- Secrets are supplied through an untracked, mode-`0600` `.env.prod`; no credentials are
+  embedded in images or source.
+- Boto3 uses the EC2 instance profile through the normal AWS SDK credential provider chain.
+- S3 permissions are prefix-scoped, uploads request SSE-S3, and the runbook requires Block
+  Public Access, TLS-only access and rejection of unencrypted writes.
+- PostgreSQL, Redpanda, Streamlit and the optional Redpanda console have no public
+  production bindings. Caddy is the only public ingress and adds TLS and security headers.
+- The runbook recommends SSM Session Manager with no inbound SSH. If SSH is unavoidable,
+  it restricts port 22 to a named administrator IP range.
+- Backup files use a restrictive systemd umask, and restore tooling refuses the active
+  database and existing restore targets.
+
+## CI/CD & Testing
+
+The primary GitHub Actions workflow runs four independent contracts:
+
+| Job | Validation |
+| --- | --- |
+| **Lint** | Python 3.11 dependency installation and Ruff. |
+| **Host backup on Python 3.9** | Amazon Linux-compatible operations dependencies and backup CLI imports. |
+| **Tests, PostgreSQL, and dbt** | Deterministic PostgreSQL fixture, pytest integration tests, `dbt parse` and `dbt build`. |
+| **Compose contracts** | Development/production Compose rendering and shared application image build. |
+
+Tests cover producer retries and shutdown, consumer offsets and replay behavior,
+idempotency, dead letters, migrations, atomic static loads, retention, backup verification,
+S3 failure handling, dashboard queries, production configuration and metrics calculations.
+External MBTA and AWS calls use fakes in tests.
+
+The separate production workflow is currently a non-mutating deployment plan. Automated
+OIDC authentication, ECR publication and SSM rollout remain future release work.
+
+## Engineering Decisions & Tradeoffs
+
+| Decision | Rationale and tradeoff |
+| --- | --- |
+| **Redpanda/Kafka** | Decouples MBTA polling from PostgreSQL availability and provides bounded replay. A single broker is operationally simple but not highly available. |
+| **Batched persistence** | Reduces transaction overhead and commits offsets only after durable writes. Larger batches improve throughput but increase replay size after interruption. |
+| **At-least-once + idempotency** | Manual commits and unique event IDs make replay safe without claiming exactly-once behavior. Duplicate attempts remain observable. |
+| **PostgreSQL** | Keeps operational, reference and analytical data in one inspectable system. It is appropriate at the current scale but requires storage, WAL and vacuum monitoring. |
+| **dbt** | Keeps transformations, tests, lineage and feature logic in SQL. It is a batch layer and is intentionally outside the realtime write path. |
+| **Docker Compose on EC2** | Fits a small-user, single-host deployment with low operational overhead. It does not provide multi-host failover or rolling orchestration. |
+| **Immutable ECR images** | Makes the deployed artifact identifiable and rollback-oriented. Publication and rollout are currently operator-controlled. |
+| **S3 archive and backup** | Moves recoverable artifacts off-host with verification and lifecycle controls. Recovery confidence still depends on regular restore drills. |
+
+## Local Development
+
+Prerequisites: Docker Desktop or Docker Engine with Compose, Git, and Python 3.11 for
+host-side development commands.
 
 ```bash
 cp .env.example .env
+# Set POSTGRES_PASSWORD in .env before startup.
+docker compose --env-file .env up -d --build
+docker compose --env-file .env ps
 ```
 
-Set `POSTGRES_PASSWORD` in `.env` before starting. Existing volumes require their
-existing database password; changing `.env` alone does not rotate it.
+Open <http://localhost:8501>. Development exposes PostgreSQL, Redpanda, Streamlit and the
+optional console on loopback only, not on all interfaces.
 
-2. Start the complete local runtime (no host producer/consumer needed):
-
-```bash
-docker compose up -d --build
-```
-
-Open <http://localhost:8501>. PostgreSQL, Redpanda, producer, consumer, and dashboard
-are managed by Compose. See [Docker runtime](docs/docker-runtime.md) for restart,
-health, storage migration, and EC2 preparation details. No AWS deployment is included.
-
-3. For development/testing and dbt, install Python dependencies:
+Install the development environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
+ruff check .
+pytest
+dbt parse --project-dir dbt --profiles-dir dbt
+dbt build --project-dir dbt --profiles-dir dbt
 ```
 
-On Windows PowerShell:
+Windows PowerShell activation:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 ```
 
-4. Download the MBTA static GTFS feed:
+Load the static feed and inspect streaming services:
 
 ```bash
 python -m ingestion.static.download_mbta_gtfs
-```
-
-Or run the local smoke test:
-
-```powershell
-.\scripts\local_smoke_test.ps1
-```
-
-See [docs/development-checklist.md](docs/development-checklist.md) for the day-one validation checklist.
-
-See [docs/continuous-integration.md](docs/continuous-integration.md) for the GitHub
-Actions jobs, deterministic PostgreSQL/dbt validation, and equivalent local commands.
-
-See [docs/ml-training-dataset.md](docs/ml-training-dataset.md) for the delay-prediction
-training dataset design.
-
-See [docs/production-readiness.md](docs/production-readiness.md) for the current
-P0/P1/P2 production-readiness assessment, [docs/aws-deployment-runbook.md](docs/aws-deployment-runbook.md)
-for future deployment commands, and [docs/backup-restore.md](docs/backup-restore.md)
-for backup/restore procedures.
-Production metric definitions and baseline commands are documented in
-[docs/production-metrics.md](docs/production-metrics.md).
-Production S3 permissions, lifecycle recommendations, IAM-role behavior, and manual
-resource requirements are in [docs/s3-backup-archive.md](docs/s3-backup-archive.md).
-Before any production Compose command, run
-`python -m scripts.validate_production_environment --env-file .env.prod`; it rejects
-mutable image tags, placeholders, missing S3 configuration, and stored AWS access keys.
-
-## Realtime Streaming
-
-Start the complete realtime pipeline:
-
-```powershell
-docker compose up -d
 docker compose logs --tail 50 producer consumer
-```
-
-The console is optional and loopback-only. Start it with
-`docker compose --profile tools up -d redpanda-console`, then open:
-
-```text
-http://localhost:8080
-```
-
-For an optional one-shot smoke test, use the running app image (the normal producer
-already polls continuously; this extra snapshot may be deduplicated):
-
-```powershell
 docker compose exec producer python -m ingestion.realtime.producer --once
 ```
 
-The consumer is already running under Compose. Inspect its logs instead of starting
-a competing host consumer:
+The normal Compose producer already runs continuously; the final command is an optional
+smoke pull and may produce events that are deduplicated downstream.
 
-```powershell
-docker compose logs --tail 50 consumer
-```
-
-The consumer group defaults to `VEHICLE_POSITIONS_CONSUMER_GROUP`, and
-`MBTA_CONSUMER_BATCH_SIZE` controls the batch size (100 by default). Automatic offset
-commits and offset storage are disabled. A batch is validated, bulk inserted in one
-PostgreSQL transaction, and then committed synchronously using the next offset for
-each partition represented in the batch. PostgreSQL failures are retried with capped
-exponential backoff; replayed events remain idempotent through the unique `event_id`
-index and `ON CONFLICT DO NOTHING` insertion. Valid events collected before a
-malformed record are flushed first. The malformed record is then written to
-`realtime_vehicle_position_dead_letters` and its partition offset is committed only
-after that transaction succeeds, allowing later valid events to continue. The
-15-minute maximum poll interval allows bounded database recovery; longer outages may
-trigger a safe replay. SIGINT and SIGTERM flush pending valid or dead-letter work and
-close the consumer cleanly.
-
-Each dead-letter row represents one rejected Kafka record, uniquely identified by
-`(topic, partition, kafka_offset)`. It preserves the raw payload, validation error,
-processing timestamp, and any safely extractable event, vehicle, and trip IDs. A
-replayed malformed record uses `ON CONFLICT DO NOTHING`. If dead-letter persistence
-or its subsequent Kafka commit fails, the consumer stops without advancing past the
-record so Redpanda can replay it. This remains at-least-once processing, not
-exactly-once processing.
-
-### Retention and migrations
-
-Run versioned database migrations with:
-
-```powershell
-python scripts/migrate_database.py
-```
-
-The local Compose startup still initializes empty PostgreSQL volumes from
-`infrastructure/postgres/init.sql`; migrations are the forward-change mechanism for
-existing environments and CI fixtures.
-
-Realtime retention is explicit. Preview eligible rows without deleting:
-
-```powershell
-docker compose exec producer python -m ingestion.retention
-```
-
-Apply local maintenance deliberately with:
-
-```powershell
-docker compose --profile maintenance run --rm retention --apply
-```
-
-The production overlay runs this same fail-closed worker hourly. Development does
-not run retention automatically.
-
-`REALTIME_RETENTION_DAYS`, `METRICS_RETENTION_DAYS`, and
-`RAW_PAYLOAD_RETENTION_DAYS` control PostgreSQL and raw payload pruning. Raw
-protobuf files and expired observations/dead letters are verified before deletion.
-Development keeps them under `RAW_ARCHIVE_ROOT`; production uses the configured S3
-archive backend described in [S3 backup and archive preparation](docs/s3-backup-archive.md).
-Redpanda topic
-retention is bounded by `REDPANDA_TOPIC_RETENTION_MS` and
-`REDPANDA_TOPIC_RETENTION_BYTES`.
-
-### Realtime pipeline health
-
-Each row in `realtime_pipeline_metrics` represents one PostgreSQL processing
-transaction: either a valid vehicle-position batch or one dead-letter record. It
-stores received, inserted, duplicate, dead-letter, and error counts together with
-processing duration and the latest source and ingestion timestamps in that unit.
-Metrics are committed in the same transaction as the corresponding operational
-data, before Kafka offsets advance.
-
-Run the health command inside the existing application container:
-
-```powershell
-docker compose exec producer python -m ingestion.realtime.health
-```
-
-Freshness is `current UTC time - latest_source_event_timestamp`. The status is
-`HEALTHY` when that age is at most `MBTA_REALTIME_STALE_THRESHOLD_SECONDS` (60 by
-default), `STALE` above the threshold, and `UNKNOWN` before a source timestamp has
-been recorded. Consumer lag is current state read directly from Redpanda for each
-partition: `high-water offset - committed group offset`. It is not stored as a
-historical metric. Historical metric totals count processing attempts since metrics
-collection began; the dead-letter total is the authoritative current row count in
-the idempotent dead-letter table.
-
-Example output:
+## Project Structure
 
 ```text
-Realtime Pipeline Health
-------------------------
-Latest event:        2026-08-30T12:12:37+00:00
-Latest ingestion:    2026-08-30T12:12:40+00:00
-Freshness:           3.0 seconds
-Status:              HEALTHY
-
-Events received:     100
-Events persisted:    99
-Duplicate events:    1
-Dead-letter events:  2
-Processing errors:   1
-Recent batch size:   100
-Recent duration:     0.154 seconds
-
-Consumer lag:
-  partition 0: lag=0 consumer=729 high_water=729
-  total:       0
+transit-data-platform/
+|-- dashboard/                 Streamlit application and live map
+|-- dags/                      Optional static-ingestion Airflow DAG
+|-- dbt/
+|   |-- models/staging/        Typed source models
+|   |-- models/intermediate/   Schedule joins and feature engineering
+|   `-- models/marts/          Dimensions, facts and ML training rows
+|-- docs/                      Architecture, operations and recovery runbooks
+|-- infrastructure/
+|   |-- caddy/                 HTTPS reverse-proxy configuration
+|   |-- postgres/              Initial schema and versioned migrations
+|   `-- systemd/               Daily PostgreSQL backup service and timer
+|-- ingestion/
+|   |-- realtime/              Producer, consumer, persistence and observability
+|   `-- static/                Static GTFS download and atomic loading
+|-- scripts/                   Migration, backup, restore and health tooling
+|-- tests/                     Unit, contract and PostgreSQL integration tests
+|-- docker-compose.yml         Local runtime
+`-- docker-compose.prod.yml    Production hardening overlay
 ```
 
-Verify the latest records:
+## Production Metrics
 
-```sql
-SELECT *
-FROM realtime_vehicle_positions
-ORDER BY ingested_at DESC
-LIMIT 20;
-```
+[Production metrics](docs/production-metrics.md) documents each metric's unit,
+calculation, retention window, limitations and exact baseline commands. Production
+snapshots should always include a capture date and should not be represented as SLAs,
+lifetime totals or sustained benchmarks without a measured observation window.
 
-## Dashboard Overview
+## Roadmap / Future Improvements
 
-The dashboard starts with the full Compose stack. Start it separately with:
-
-```powershell
-docker compose up -d dashboard
-```
-
-The Overview page reads the existing static GTFS and realtime tables. It shows
-pipeline freshness, the latest source event, cumulative realtime observations,
-current vehicles, static route/stop/trip counts, dead-letter records, a vehicle
-map, and the 25 newest observations. The route selector filters the current vehicle
-table, map, and recent activity together. Route and stop names are enriched from
-the stored static GTFS tables, and trip headsigns provide destinations when the
-realtime trip ID matches the static snapshot. The dashboard never calls the MBTA
-API directly.
-
-"Vehicles currently observed" means the newest stored observation for each vehicle
-within a bounded 5,000-observation window that is also newer than
-`DASHBOARD_VEHICLE_MAX_AGE_SECONDS` (90 seconds by default). This keeps the query
-bounded as history grows and hides old markers when ingestion is stale. Coordinates
-that are missing or outside valid latitude and longitude ranges are excluded from
-the map without removing the vehicle from the table. Missing labels, stops, trips,
-headsigns, statuses, and coordinates display as `Unknown`. The dashboard does not
-display delay or on-time claims because VehiclePositions does not provide an
-authoritative delay value.
-
-The Boston-centered PyDeck map uses open map tiles without a paid API key. Marker
-colors group familiar MBTA route families. Hovering a marker shows a concise route,
-destination, vehicle, status, and timestamp summary; selecting it opens a persistent
-details panel. The page reports its last successful map refresh and automatically
-refreshes through the existing Streamlit fragment interval.
-
-Static catalog queries and exact aggregate counts are cached with bounded lifetimes.
-Current vehicles and recent activity use the indexed observation identifier,
-bounded result sets, parameterized route filters, and a short cache lifetime.
-
-`DASHBOARD_REFRESH_INTERVAL_SECONDS` sets the default realtime refresh interval
-(30 seconds by default). The sidebar can disable auto-refresh or select a different
-interval without changing ingestion. "Last realtime event" is the source event
-time from MBTA, while "Last dashboard refresh" is only the time Streamlit queried
-the database.
-
-Dashboard status has two independent parts. PostgreSQL connectivity is reported
-separately from realtime freshness. Realtime data is `Receiving` when its latest
-source event is no older than `MBTA_REALTIME_STALE_THRESHOLD_SECONDS`, `Stale` when
-it exceeds that threshold, and `No data` when no source timestamp exists. A failed
-section displays an unavailable message while the rest of the Overview remains
-usable; database errors and credentials are not exposed in the page.
-
-## Initial MVP
-
-- Download and preserve the MBTA GTFS static ZIP.
-- Record metadata: ingestion timestamp, source, file name, record count, checksum.
-- Load key GTFS files into PostgreSQL raw tables.
-- Build dbt staging models for routes, stops, trips, and stop times.
-
-## Incremental dbt processing
-
-The growing realtime staging relation and ML training fact use PostgreSQL dbt
-incremental materializations. Realtime staging advances by the source
-`observation_id`, which captures timestamp-late inserts without rescanning historical
-rows. The training mart uses `observation_id` with a 24-hour lookback so recent rows
-can gain four-stop-ahead targets safely. Static GTFS models and the global-window
-feature model remain non-incremental by design. See
-[docs/dbt-incremental-processing.md](docs/dbt-incremental-processing.md) for model
-selection, late-arrival behavior, full-refresh guidance, and limitations.
-- Add a dashboard with route and schedule overview metrics.
+- Collect and compare longer 24-hour and 7-day production observation windows.
+- Add off-host notifications for stale ingestion, sustained lag, backup failure and disk pressure.
+- Complete the reviewed GitHub OIDC, ECR and SSM deployment executor.
+- Run scheduled restore drills and record recovery-time evidence.
+- Evaluate partitioning or horizontal scaling only after production measurements justify it.
+- Add GTFS-Realtime TripUpdates before training a defensible downstream-delay model.

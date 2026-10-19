@@ -8,13 +8,13 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from dashboard.map_view import (
+from map_view import (
     build_vehicle_deck,
     prepare_vehicle_map_data,
     route_legend,
     selected_vehicle,
 )
-from dashboard.presentation import prepare_vehicle_table, route_option_labels
+from presentation import prepare_vehicle_table, route_option_labels
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "demo_data"

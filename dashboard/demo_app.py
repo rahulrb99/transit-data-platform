@@ -4,17 +4,16 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pandas as pd
-import requests
-import streamlit as st
-
 from map_view import (
     build_vehicle_deck,
     prepare_vehicle_map_data,
     route_legend,
     selected_vehicle,
 )
+import pandas as pd
 from presentation import prepare_vehicle_table, route_option_labels
+import requests
+import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "demo_data"

@@ -91,7 +91,12 @@ def load_live_vehicles() -> tuple[pd.DataFrame, str]:
             "longitude": attributes.get("longitude"),
         })
 
-    return pd.DataFrame.from_records(records), fetched_at
+    frame = pd.DataFrame.from_records(records)
+    # Existing presentation helpers expect datetime-like values, not raw ISO strings.
+    for column in ("event_timestamp", "ingested_at"):
+        if column in frame.columns:
+            frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+    return frame, fetched_at
 
 
 @st.cache_data

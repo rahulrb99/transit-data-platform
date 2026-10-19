@@ -132,21 +132,15 @@ st.title("MBTA Transit Data Platform")
 st.caption("Portfolio dashboard · temporary demo deployment")
 
 st.info(
-    """
-    **🚧 A quick update from the control room**
-
-    Hey, thanks for stopping by!
-
-    🚍 **Live vehicle tracking is still running!** Vehicle positions are fetched directly
-    from the public MBTA API, so you can still explore buses and trains moving around Boston.
-
-    The behind-the-scenes production pipeline is taking an unscheduled pit stop while I
-    resolve an AWS account restriction related to billing verification. That means the
-    engineering metrics below reflect a **historical production snapshot**, not current
-    pipeline activity.
-
-    The dashboard is open; the data pipeline is on a coffee break. ☕
-    """
+    "**🚧 A quick update from the control room**\n\n"
+    "Hey, thanks for stopping by!\n\n"
+    "🚍 **Live vehicle tracking is still running!** Vehicle positions are fetched directly "
+    "from the public MBTA API, so you can still explore buses and trains moving around Boston.\n\n"
+    "The behind-the-scenes production pipeline is taking an unscheduled pit stop while I "
+    "resolve an AWS account restriction related to billing verification. That means the "
+    "engineering metrics below reflect a **historical production snapshot**, not current "
+    "pipeline activity.\n\n"
+    "The dashboard is open; the data pipeline is on a coffee break. ☕"
 )
 
 with st.sidebar:

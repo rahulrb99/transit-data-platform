@@ -40,7 +40,6 @@ def load_live_vehicles() -> tuple[pd.DataFrame, str]:
         params={
             "include": "trip,route,stop",
             "page[limit]": 500,
-            "sort": "-updated_at",
         },
         headers={"User-Agent": "MBTA-Transit-Data-Platform-Portfolio-Demo"},
         timeout=REQUEST_TIMEOUT_SECONDS,

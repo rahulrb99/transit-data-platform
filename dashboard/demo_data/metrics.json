@@ -1,13 +1,13 @@
 {
-  "snapshot_at": "Not captured yet",
-  "routes": null,
-  "stops": null,
-  "trips": null,
-  "realtime_events_persisted_total": null,
-  "dead_letter_records": null,
-  "current_ingestion_rate": null,
-  "peak_ingestion_rate": null,
-  "p95_latency": null,
-  "consumer_success_rate": null,
-  "note": "Replace null values only with verified metrics from an exported production snapshot."
+  "snapshot_at": "2026-09-07 (point-in-time production snapshot)",
+  "routes": 400,
+  "stops": 10309,
+  "trips": 189398,
+  "realtime_events_persisted_total": 12495172,
+  "dead_letter_records": 0,
+  "current_ingestion_rate": "1,068 events/min",
+  "peak_ingestion_rate": "3,133 events/min",
+  "p95_latency": "2.73 sec",
+  "consumer_success_rate": "100%",
+  "source_note": "Historical values copied from the repository README production snapshot. They are not live readings."
 }

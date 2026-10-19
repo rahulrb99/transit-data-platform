@@ -1,0 +1,1 @@
+event_timestamp,vehicle_id,vehicle_label,entity_id,trip_id,trip_headsign,route_id,route_short_name,route_long_name,stop_id,stop_name,current_status,ingested_at,latitude,longitude

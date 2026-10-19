@@ -14,11 +14,7 @@ from dashboard.map_view import (
     route_legend,
     selected_vehicle,
 )
-from dashboard.presentation import (
-    UNKNOWN_VALUE,
-    prepare_vehicle_table,
-    route_option_labels,
-)
+from dashboard.presentation import prepare_vehicle_table, route_option_labels
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "demo_data"
@@ -58,17 +54,12 @@ def load_live_vehicles() -> tuple[pd.DataFrame, str]:
         attributes = resource.get("attributes") or {}
         relationships = resource.get("relationships") or {}
 
-        def related_id(name: str) -> str | None:
-            relation = relationships.get(name) or {}
-            data = relation.get("data")
-            if isinstance(data, dict):
-                value = data.get("id")
-                return str(value) if value is not None else None
-            return None
-
-        route_id = related_id("route")
-        trip_id = related_id("trip")
-        stop_id = related_id("stop")
+        route_data = (relationships.get("route") or {}).get("data")
+        trip_data = (relationships.get("trip") or {}).get("data")
+        stop_data = (relationships.get("stop") or {}).get("data")
+        route_id = str(route_data["id"]) if isinstance(route_data, dict) and route_data.get("id") is not None else None
+        trip_id = str(trip_data["id"]) if isinstance(trip_data, dict) and trip_data.get("id") is not None else None
+        stop_id = str(stop_data["id"]) if isinstance(stop_data, dict) and stop_data.get("id") is not None else None
         route = included.get(("route", route_id), {}) if route_id else {}
         trip = included.get(("trip", trip_id), {}) if trip_id else {}
         stop = included.get(("stop", stop_id), {}) if stop_id else {}

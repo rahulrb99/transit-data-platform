@@ -1,0 +1,13 @@
+{
+  "snapshot_at": "2026-09-07 (point-in-time production snapshot)",
+  "routes": 400,
+  "stops": 10309,
+  "trips": 189398,
+  "realtime_events_persisted_total": 12495172,
+  "dead_letter_records": 0,
+  "current_ingestion_rate": "1,068 events/min",
+  "peak_ingestion_rate": "3,133 events/min",
+  "p95_latency": "2.73 sec",
+  "consumer_success_rate": "100%",
+  "source_note": "Historical values copied from the repository README production snapshot. They are not live readings."
+}

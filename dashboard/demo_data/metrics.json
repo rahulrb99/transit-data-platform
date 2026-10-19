@@ -1,0 +1,13 @@
+{
+  "snapshot_at": "Not captured yet",
+  "routes": null,
+  "stops": null,
+  "trips": null,
+  "realtime_events_persisted_total": null,
+  "dead_letter_records": null,
+  "current_ingestion_rate": null,
+  "peak_ingestion_rate": null,
+  "p95_latency": null,
+  "consumer_success_rate": null,
+  "note": "Replace null values only with verified metrics from an exported production snapshot."
+}
